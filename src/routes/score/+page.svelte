@@ -45,6 +45,9 @@
   //   0   ：♮（調号を打ち消して、何も付かない音にする）
   let selectedAccidental = $state(null);
 
+  // 選択中の音が何番目か（0から始まる）。選択していないときは null
+  let selectedIndex = $state(null);
+
   /**
    * 今選んでいるオクターブと変化記号で、音のデータを作る関数
    * 実際に追加するとき、ボタンを押せるかどうかを調べるとき、ボタンの文字を作るときに使う。
@@ -122,12 +125,34 @@
   }
 
   /**
+   * 音を選ぶ関数
+   * 五線譜の音符か、文字の一覧の音をタップしたときに呼ばれる。
+   * すでに選ばれている音をもう一度タップすると、選択を解除する。
+   * @param {number} index - タップされた音が何番目か（0から始まる）
+   */
+  function selectNote(index) {
+    if (selectedIndex === index) {
+      // 同じ音をもう一度タップしたとき：解除する
+      selectedIndex = null;
+    } else {
+      // 別の音をタップしたとき：その音を選ぶ
+      selectedIndex = index;
+    }
+  }
+
+  /**
    * 最後の1音を消す関数
    * 「1つ消す」ボタンを押したときに呼ばれる。
    */
   function removeLastNote() {
     // 並びの最後の1つを取り除く
     notes.pop();
+
+    // 消した音を選んでいた場合は、選択を解除する
+    // （なくなった音を選んだままにしないため）
+    if (selectedIndex !== null && selectedIndex >= notes.length) {
+      selectedIndex = null;
+    }
   }
 </script>
 
@@ -161,17 +186,21 @@
   <p class="scale">{scaleNames.join(" ")}</p>
 
   <!-- 五線譜（登録した音の並びと、調号の数を渡して表示する） -->
-  <Staff {notes} signature={currentKey.signature} />
+  <!-- selectedIndex で選択中の音を伝え、音符がタップされたら selectNote を呼んでもらう -->
+  <Staff {notes} signature={currentKey.signature} {selectedIndex} onselect={selectNote} />
 
-  <!-- 登録した音の一覧（確認用として、五線譜の下に文字でも表示する） -->
+  <!-- 登録した音の一覧（五線譜の下に文字でも表示する。タップして音を選べる） -->
   <!-- こちらは調号に関係なく、実際に鳴る音をそのまま表示する -->
   <div class="note-list">
     {#if notes.length === 0}
       <span class="empty">まだ音がありません</span>
     {:else}
-      <!-- 音を1つずつ取り出して、文字にして並べる -->
+      <!-- 音を1つずつ取り出して、押せるボタンにして並べる -->
       {#each notes as note, index (index)}
-        <span class="note-item">{noteToText(note)}</span>
+        <!-- 選択中の音には selected クラスを付けて色を変える -->
+        <button class="note-item" class:selected={selectedIndex === index} onclick={() => selectNote(index)}>
+          {noteToText(note)}
+        </button>
       {/each}
     {/if}
   </div>
@@ -285,12 +314,22 @@
     color: #757575;
   }
 
-  /* 一覧の中の1音 */
-  .note-item {
-    padding: 4px 8px;
+  /* 一覧の中の1音（選択前）：指で押しやすい大きさのボタンにする */
+  /* 枠は透明にしておき、選択中だけ色を付ける（枠の有無で大きさが変わらないようにするため） */
+  button.note-item {
+    padding: 10px 12px;
     font-size: 1.1rem;
+    color: #212121;
     background-color: #e3f2fd;
-    border-radius: 4px;
+    border: 2px solid transparent;
+    border-radius: 6px;
+  }
+
+  /* 一覧の中の1音（選択中）：五線譜の選択中の色に合わせて、濃い青の枠と文字にする */
+  button.note-item.selected {
+    color: #0d47a1;
+    background-color: #bbdefb;
+    border-color: #0d47a1;
   }
 
   /* 登録した音の数 */

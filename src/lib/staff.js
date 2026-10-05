@@ -172,24 +172,38 @@ export function layoutKeySignature(signature) {
 }
 
 /**
- * 段の中での音符の横の位置（玉の中心）を計算する関数
+ * 段の中で最初の音符の横の位置（玉の中心）を計算する関数
  * 調号の記号が多いほど、最初の音符を右にずらす。
- * 最後の音符の位置は変えないので、そのぶん音符どうしの間隔がせまくなる。
+ * @param {number} signature - 調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
+ * @returns {number} 最初の音符の玉の中心の横の位置
+ */
+function getFirstNoteX(signature) {
+  // 調号の右端の位置
+  const signatureEndX = KEY_SIGNATURE_X + Math.abs(signature) * KEY_SIGNATURE_SPACING;
+
+  // 調号の右端から、決まった間隔を空けた位置
+  return signatureEndX + KEY_SIGNATURE_TO_NOTE_GAP;
+}
+
+/**
+ * 音符どうしの横の間隔を計算する関数
+ * 最初の音符から最後の音符までを、等間隔に分ける。
+ * 最後の音符の位置は変えないので、調号の記号が多いほど間隔がせまくなる。
+ * @param {number} signature - 調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
+ * @returns {number} 音符どうしの横の間隔
+ */
+function getNoteSpacing(signature) {
+  return (LAST_NOTE_X - getFirstNoteX(signature)) / (NOTES_PER_ROW - 1);
+}
+
+/**
+ * 段の中での音符の横の位置（玉の中心）を計算する関数
  * @param {number} indexInRow - 段の中で何番目の音符か（0から始まる）
  * @param {number} signature - 調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
  * @returns {number} 玉の中心の横の位置
  */
 function getNoteX(indexInRow, signature) {
-  // 調号の右端の位置
-  const signatureEndX = KEY_SIGNATURE_X + Math.abs(signature) * KEY_SIGNATURE_SPACING;
-
-  // 最初の音符の位置（調号の右端から、決まった間隔を空ける）
-  const firstNoteX = signatureEndX + KEY_SIGNATURE_TO_NOTE_GAP;
-
-  // 音符どうしの間隔（最初の音符から最後の音符までを、等間隔に分ける）
-  const noteSpacing = (LAST_NOTE_X - firstNoteX) / (NOTES_PER_ROW - 1);
-
-  return firstNoteX + indexInRow * noteSpacing;
+  return getFirstNoteX(signature) + indexInRow * getNoteSpacing(signature);
 }
 
 /**
@@ -226,7 +240,8 @@ function getLedgerPositions(position) {
  *   x: number, y: number,
  *   stemX: number, stemY1: number, stemY2: number,
  *   ledgerYs: number[], ledgerX1: number, ledgerX2: number,
- *   accidentalGlyph: string, accidentalX: number
+ *   accidentalGlyph: string, accidentalX: number,
+ *   hitX: number, hitWidth: number
  * }} 描画に使う位置の情報
  */
 export function layoutNote(note, indexInRow, signature) {
@@ -297,6 +312,13 @@ export function layoutNote(note, indexInRow, signature) {
   // 変化記号の右端の位置（玉の左端から、すき間ぶん左）
   const accidentalX = x - NOTEHEAD_WIDTH / 2 - ACCIDENTAL_GAP;
 
+  // ----- タップできる範囲 -----
+  // 玉を中心にした縦の帯。幅は音符どうしの間隔と同じにして、となりの帯とすき間なく並べる
+  const hitWidth = getNoteSpacing(signature);
+
+  // 帯の左端の位置（玉の中心から、幅の半分だけ左）
+  const hitX = x - hitWidth / 2;
+
   return {
     x,
     y,
@@ -308,5 +330,7 @@ export function layoutNote(note, indexInRow, signature) {
     ledgerX2,
     accidentalGlyph,
     accidentalX,
+    hitX,
+    hitWidth,
   };
 }
