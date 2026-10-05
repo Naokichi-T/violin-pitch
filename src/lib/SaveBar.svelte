@@ -1,12 +1,13 @@
 <script>
-  // 楽譜の名前の表示と、「保存」「新規」のボタンをまとめた部品
+  // 楽譜の名前の表示と、「保存」「新規」「別の名前で保存」のボタンをまとめた部品
   // 楽譜の編集ページの上のほうに置いて使う。
+  // 保存していない変更があるときは、名前の横に「変更あり」の印を付ける。
 
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
   import { onDestroy } from "svelte";
 
   // 保存した楽譜の一覧を扱う関数を読み込む
-  import { loadSavedScores, isNameUsed, addSavedScore, updateSavedScore } from "#lib/library.js";
+  import { loadSavedScores, isNameUsed, addSavedScore, updateSavedScore, hasUnsavedChanges } from "#lib/library.js";
 
   // この部品を使う側（編集ページ）から受け取る値
   // keyId         ：楽譜の調の id
@@ -40,6 +41,26 @@
 
   // エラーメッセージ（ないときは空の文字）
   let errorMessage = $state("");
+
+  // 保存した回数。保存するたびに1増やす
+  // 下の isUnsaved を、保存した直後に計算し直させるための目印として使う
+  // （保存先のブラウザの中身が変わっても、Svelte は自動では気づけないため）
+  let saveCount = $state(0);
+
+  // 保存していない変更があるかどうか（true：ある）
+  // $derived.by の中で使っている値（調・テンポ・音律・音の並び・saveCount など）が変わるたびに、自動で調べ直される
+  let isUnsaved = $derived.by(() => {
+    // saveCount を読んでおくことで、保存した直後にも調べ直されるようにする（値そのものは使わない）
+    saveCount;
+
+    return hasUnsavedChanges({
+      savedId: savedId,
+      keyId: keyId,
+      tempo: tempo,
+      temperamentId: temperamentId,
+      notes: notes,
+    });
+  });
 
   // 名前の入力欄の部品そのもの。入力欄にカーソルを入れるために使う
   // 入力欄が画面に出ていないときは null
@@ -83,6 +104,9 @@
   function showSavedMessage() {
     // 保存した楽譜が今いくつあるかも一緒に表示する
     message = "保存しました（保存した楽譜：" + loadSavedScores().length + "件）";
+
+    // 保存した回数を1増やす（「変更あり」の印を、調べ直して消すため）
+    saveCount = saveCount + 1;
 
     // 前の予約が残っていたら取り消してから、新しく予約する
     clearMessageTimer();
@@ -128,6 +152,21 @@
     }
 
     // 名前の入力欄を表示する（前の名前があれば、最初から入れておく）
+    nameInput = name;
+    isNaming = true;
+  }
+
+  /**
+   * 「別の名前で保存」ボタンを押したときの処理をする関数
+   * 元の楽譜は残したまま、今の内容を、別の名前の新しい楽譜として保存する。
+   * 名前の入力欄を表示するだけで、実際の保存は「保存する」を押したときに行う。
+   */
+  function handleSaveAs() {
+    // 前のメッセージを消す
+    message = "";
+    errorMessage = "";
+
+    // 名前の入力欄を表示する（今の名前を入れておくので、少し直すだけで済む）
     nameInput = name;
     isNaming = true;
   }
@@ -182,11 +221,13 @@
 
   /**
    * 「新規」ボタンを押したときの処理をする関数
-   * 今の楽譜を閉じて、何も入っていない新しい楽譜にする。押し間違いを防ぐために、先に確認する。
+   * 今の楽譜を閉じて、何も入っていない新しい楽譜にする。
+   * 保存していない変更があるときだけ、消えてしまう前に確認する。
    */
   function handleNew() {
-    // 確認の画面を出す（「キャンセル」を押すと false が返るので、何もせずに終わる）
-    if (!confirm("今の楽譜を閉じて、新しい楽譜を作ります。保存していない変更は消えます。よろしいですか？")) {
+    // 保存していない変更があるとき：確認の画面を出す（「キャンセル」を押すと false が返るので、何もせずに終わる）
+    // && は「左が true のときだけ右を調べる」ので、変更がないときは確認を出さずに先へ進む
+    if (isUnsaved && !confirm("今の楽譜を閉じて、新しい楽譜を作ります。保存していない変更は消えます。よろしいですか？")) {
       return;
     }
 
@@ -203,12 +244,24 @@
   <!-- 楽譜の名前（まだ保存していないときは「（名前なし）」と薄く表示する） -->
   <span class="score-name" class:unnamed={name === ""}>{name === "" ? "（名前なし）" : name}</span>
 
+  <!-- 保存していない変更があるときだけ、「変更あり」の印を表示する -->
+  {#if isUnsaved}
+    <span class="unsaved-mark">変更あり</span>
+  {/if}
+
   <!-- 新しい楽譜を作るボタン -->
   <button class="bar-button" onclick={handleNew}>新規</button>
 
   <!-- 保存するボタン（音が1つもないときと、名前を入力している最中は押せない） -->
   <button class="bar-button primary" disabled={notes.length === 0 || isNaming} onclick={handleSave}>保存</button>
 </div>
+
+<!-- 「別の名前で保存」：保存した楽譜を開いていて、名前を入力していないときだけ表示する -->
+{#if savedId !== null && !isNaming}
+  <div class="save-as-row">
+    <button class="save-as-button" disabled={notes.length === 0} onclick={handleSaveAs}>別の名前で保存</button>
+  </div>
+{/if}
 
 <!-- 名前の入力欄：新しく保存するときだけ表示する -->
 {#if isNaming}
@@ -262,6 +315,41 @@
   .score-name.unnamed {
     font-weight: normal;
     color: #9e9e9e;
+  }
+
+  /* 「変更あり」の印：小さなオレンジの札 */
+  .unsaved-mark {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    font-size: 0.7rem;
+    color: white;
+    background-color: #ef6c00;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+
+  /* 「別の名前で保存」の行：ボタンを右に寄せる */
+  .save-as-row {
+    display: flex;
+    justify-content: flex-end;
+    margin: -4px 0 8px 0;
+  }
+
+  /* 「別の名前で保存」ボタン：あまり使わないので、枠のない小さな文字だけのボタンにする */
+  button.save-as-button {
+    padding: 2px 4px;
+    font-size: 0.8rem;
+    color: #1976d2;
+    background-color: transparent;
+    border: none;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  /* 押せない状態の「別の名前で保存」ボタン：薄く表示する */
+  button.save-as-button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
   }
 
   /* 「新規」「保存」などのボタン共通：白地に青い枠の、小さめのボタン */

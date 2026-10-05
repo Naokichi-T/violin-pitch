@@ -2,11 +2,11 @@
   // onMount：このページが画面に表示された直後に処理をするための仕組み
   import { onMount } from "svelte";
 
-  // 保存した楽譜の一覧を読み込む関数と、削除する関数を読み込む
-  import { loadSavedScores, deleteSavedScore } from "#lib/library.js";
+  // 保存した楽譜の一覧を読み込む関数、削除する関数、保存していない変更があるかを調べる関数を読み込む
+  import { loadSavedScores, deleteSavedScore, hasUnsavedChanges } from "#lib/library.js";
 
-  // 作業中の楽譜を読み込む関数・保存する関数と、音律を保存する関数を読み込む
-  import { loadCurrentScore, saveCurrentScore, saveTemperamentId } from "#lib/settings.js";
+  // 作業中の楽譜を読み込む関数・保存する関数と、音律を読み込む関数・保存する関数を読み込む
+  import { loadCurrentScore, saveCurrentScore, loadTemperamentId, saveTemperamentId } from "#lib/settings.js";
 
   // 調のデータを探す関数と、調の名前を作る関数を読み込む
   import { getKey, getKeyLabel } from "#lib/key.js";
@@ -116,8 +116,21 @@
       confirmText = "「" + score.name + "」を開きます。今編集中の楽譜は閉じます（保存していない変更は消えます）。よろしいですか？";
     }
 
-    // 作業中の楽譜が置き換わるので、先に確認する（「キャンセル」を押すと、何もせずに終わる）
-    if (!confirm(confirmText)) {
+    // 作業中の楽譜に、保存していない変更があるかどうかを調べる
+    // （音律は作業中の楽譜とは別に保存してあるので、読み込んで一緒に渡す）
+    const currentScore = loadCurrentScore();
+    const isUnsaved =
+      currentScore !== null &&
+      hasUnsavedChanges({
+        savedId: currentScore.savedId,
+        keyId: currentScore.keyId,
+        tempo: currentScore.tempo,
+        temperamentId: loadTemperamentId(),
+        notes: currentScore.notes,
+      });
+
+    // 保存していない変更があるときだけ、消えてしまう前に確認する（「キャンセル」を押すと、何もせずに終わる）
+    if (isUnsaved && !confirm(confirmText)) {
       return;
     }
 

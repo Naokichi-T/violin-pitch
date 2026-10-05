@@ -157,3 +157,44 @@ export function deleteSavedScore(id) {
   // 書き込む
   return writeSavedScores(remaining);
 }
+
+/**
+ * 楽譜の内容のうち、比べるのに使う部分だけを取り出して、文字にする関数（このファイルの中だけで使う）
+ * 調・テンポ・音律・音の並びを、決まった順番で並べた文字にするので、2つの楽譜を文字どうしで比べられる。
+ * @param {{keyId: string, tempo: number, temperamentId: string, notes: Array}} score - 楽譜の内容
+ * @returns {string} 比べるための文字
+ */
+function toComparableText(score) {
+  return JSON.stringify({
+    keyId: score.keyId,
+    tempo: score.tempo,
+    temperamentId: score.temperamentId,
+    // 音は、必要な3つの値だけを決まった順番で取り出す
+    notes: score.notes.map((note) => ({ step: note.step, accidental: note.accidental, octave: note.octave })),
+  });
+}
+
+/**
+ * 作業中の楽譜に、保存していない変更があるかどうかを調べる関数
+ * - まだ名前を付けて保存していない楽譜：音が1つでもあれば「変更あり」
+ * - 保存した楽譜を開いている：保存してある内容と、調・テンポ・音律・音の並びのどれかが違えば「変更あり」
+ * @param {{savedId: string|null, keyId: string, tempo: number, temperamentId: string, notes: Array}} current - 作業中の楽譜
+ * @returns {boolean} 保存していない変更があれば true
+ */
+export function hasUnsavedChanges(current) {
+  // まだ名前を付けて保存していない楽譜のとき
+  if (current.savedId === null) {
+    return current.notes.length > 0;
+  }
+
+  // 開いているはずの、保存した楽譜を探す
+  const saved = loadSavedScores().find((score) => score.id === current.savedId);
+
+  // 見つからないとき（一覧から削除されていたときなど）は、まだ保存していない楽譜と同じ扱いにする
+  if (saved === undefined) {
+    return current.notes.length > 0;
+  }
+
+  // 保存してある内容と、文字にして比べる
+  return toComparableText(current) !== toComparableText(saved);
+}
