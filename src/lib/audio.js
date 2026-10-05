@@ -17,7 +17,7 @@ const QUICK_STOP_TIME = 0.03;
 const FILTER_FREQUENCY = 2500;
 
 // 合図の音の大きさ（0〜1）。練習の邪魔にならないように、お手本の音より小さくする
-const CHIME_VOLUME = 0.12;
+const CHIME_VOLUME = 0.3;
 
 // 合図の音1つぶんの長さ（秒）
 const CHIME_NOTE_SECONDS = 0.12;
