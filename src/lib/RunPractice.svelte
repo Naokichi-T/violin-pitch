@@ -2,7 +2,7 @@
   // 「通し」モードの練習の部品
   // メトロノームのテンポに合わせて、目標の音が1拍ごとに次へ進む。
   // 弾いた音は、1拍ごとに「OK・高い・低い・音なし」のどれかに判定して記録する。
-  // （点数は、このあと追加する）
+  // 最後まで進むと、全体の点数を表示する。
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -102,6 +102,10 @@
   //   cents ：音なしのときは null
   let results = $state([]);
 
+  // 五線譜でタップして選んだ音が何番目か（0から始まる）。選んでいないときは null
+  // 選んだ音の結果の札を、目立つように表示するために使う
+  let selectedIndex = $state(null);
+
   // エラーメッセージ（マイクが使えなかったときなどに表示する）
   let errorMessage = $state("");
 
@@ -197,14 +201,36 @@
   }
 
   /**
+   * 五線譜の音符がタップされたときに、その音を選ぶ関数
+   * 選んだ音の結果の札が、目立つ表示になる。同じ音をもう一度タップすると、選ぶのをやめる。
+   * @param {number} noteIndex - タップされた音が何番目か（0から始まる）
+   */
+  function selectNote(noteIndex) {
+    // まだ判定していない音（結果が無い音）は、選べないようにする
+    // results[noteIndex] は、結果が無いとき undefined になる
+    if (results[noteIndex] === undefined) {
+      return;
+    }
+
+    if (selectedIndex === noteIndex) {
+      // すでに選んでいる音をタップしたとき：選ぶのをやめる
+      selectedIndex = null;
+    } else {
+      // それ以外：タップされた音を選ぶ
+      selectedIndex = noteIndex;
+    }
+  }
+
+  /**
    * 「通し」の練習を始める関数
    * 「始める」ボタンを押したときに呼ばれる。
    * マイクを開始してからカウントを鳴らし、そのあと1拍ごとに目標の音を進める。
    */
   async function start() {
-    // 前回のエラーメッセージと、前回の結果を消す
+    // 前回のエラーメッセージと、前回の結果を消す。音を選んでいたら、それもやめる
     errorMessage = "";
     results = [];
+    selectedIndex = null;
 
     // マイクの準備中にする（この間は「やめる」ボタンが出る）
     phase = "preparing";
@@ -392,7 +418,8 @@
 <!-- 五線譜（今の目標の音を、編集ページの「再生中」と同じオレンジで表示する） -->
 <!-- statuses には、判定の結果の種類だけを取り出した配列を渡す（音符の色と記号になる） -->
 <!-- results.map(…) は、結果を1つずつ取り出して、その中の status だけを並べた配列を作る -->
-<Staff {notes} signature={currentKey.signature} playingIndex={currentIndex} statuses={results.map((result) => result.status)} />
+<!-- selectedIndex と onselect で、音符をタップして選べるようにする（選んだ音は青い帯になる） -->
+<Staff {notes} signature={currentKey.signature} playingIndex={currentIndex} statuses={results.map((result) => result.status)} {selectedIndex} onselect={selectNote} />
 
 <!-- 今の状態の表示：状態によって、表示する内容を切り替える -->
 <div class="status-area">
@@ -423,13 +450,14 @@
 </div>
 
 <!-- 判定の結果の一覧：結果が1つ以上あるときだけ表示する -->
-<!-- （五線譜に色と記号で表示するようにしたら、この一覧は見直す） -->
+<!-- 何セントずれたかと、1音ごとの点数は、五線譜では分からないので、ここで表示する -->
 {#if results.length > 0}
   <ul class="result-list">
     <!-- 結果を1つずつ取り出して表示する（index は 0 から始まる番号） -->
     {#each results as result, index}
       <!-- 結果の種類（ok・high・low・none）を class に付けて、色を変える -->
-      <li class="result {result.status}">
+      <!-- 五線譜で選んだ音の札には selected を付けて、目立つ表示にする -->
+      <li class="result {result.status}" class:selected={index === selectedIndex}>
         <span class="result-note">{index + 1}. {noteToText(notes[index])}</span>
         {STATUS_LABELS[result.status]}
         <!-- ずれ（セント）は、音なしのときは表示しない -->
@@ -516,7 +544,7 @@
     color: #616161;
   }
 
-  /* 「おわり」の文字：緑 */
+  /* 点数の文字：緑 */
   .status-main.finished {
     color: #2e7d32;
   }
@@ -547,7 +575,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* 結果の中の、番号と音名：少し薄くする */
+  /* 結果の中の、番号・音名・点数：少し薄くする */
   .result-note {
     opacity: 0.7;
   }
@@ -570,6 +598,39 @@
   /* 音なし：グレー */
   .result.none {
     color: #757575;
+  }
+
+  /* 五線譜で選んだ音の札：色を塗って白い文字にし、少し大きく太くして目立たせる */
+  .result.selected {
+    font-size: 1.05rem;
+    font-weight: bold;
+    color: white;
+  }
+
+  /* 選んだ札の中の、番号・音名・点数：薄くしない（白い文字がはっきり見えるように） */
+  .result.selected .result-note {
+    opacity: 1;
+  }
+
+  /* 選んだ札の色：結果の種類ごとに、文字の色と同じ色で塗る */
+  .result.ok.selected {
+    background-color: #2e7d32;
+    border-color: #2e7d32;
+  }
+
+  .result.high.selected {
+    background-color: #c62828;
+    border-color: #c62828;
+  }
+
+  .result.low.selected {
+    background-color: #1565c0;
+    border-color: #1565c0;
+  }
+
+  .result.none.selected {
+    background-color: #757575;
+    border-color: #757575;
   }
 
   /* エラーメッセージ */
