@@ -608,6 +608,9 @@
       </button>
     {/if}
   </div>
+
+  <!-- 練習ページへのリンク（楽譜は自動で保存されているので、そのまま練習ページで使える） -->
+  <a class="practice-link" href="/practice">この楽譜で練習する →</a>
 </main>
 
 <!-- 入力パネル：音を入れるためのボタンを、画面の下に固定して表示する -->
@@ -896,6 +899,18 @@
   /* 停止ボタン（赤） */
   button.play-button.stop {
     background-color: #c62828;
+  }
+
+  /* 練習ページへのリンク：白地に青い枠のボタンのような見た目にする */
+  .practice-link {
+    display: block;
+    margin-top: 10px;
+    padding: 10px;
+    color: #1976d2;
+    border: 2px solid #1976d2;
+    border-radius: 8px;
+    text-align: center;
+    text-decoration: none;
   }
 
   /* 入力パネル：画面の下に固定する */
