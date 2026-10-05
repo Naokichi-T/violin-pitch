@@ -18,6 +18,9 @@
   // 選んだ音律での、音の周波数を計算する関数を読み込む
   import { getFrequency } from "#lib/tuning.js";
 
+  // 1音ごとの点数と、全体の点数を計算する関数を読み込む
+  import { centsToPoints, getTotalScore } from "#lib/scoring.js";
+
   // マイクで音の高さを調べはじめる関数と、止める関数を読み込む
   import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
 
@@ -122,6 +125,21 @@
   // 動いている最中かどうか（マイクの準備中・カウント中・演奏中なら true）
   // $derived を付けると、phase が変わるたびに自動で計算し直される
   let isRunning = $derived(phase === "preparing" || phase === "countIn" || phase === "playing");
+
+  // 全体の点数（1音ごとの点数の平均）
+  // results.map(…) で、結果の中のずれ（cents）だけを並べた配列を作って渡す
+  let totalScore = $derived(getTotalScore(results.map((result) => result.cents)));
+
+  // 結果の種類ごとの数（OK がいくつ、高いがいくつ、…）
+  // $derived.by は、何行かの計算の結果を入れておきたいときに使う
+  let statusCounts = $derived.by(() => {
+    // 最初は全部 0 にしておき、結果を1つずつ見て、その種類の数を1増やす
+    const counts = { ok: 0, high: 0, low: 0, none: 0 };
+    for (const result of results) {
+      counts[result.status] += 1;
+    }
+    return counts;
+  });
 
   // この部品が画面に表示されたときに、前回保存したカウントの拍の数を読み込む
   // （ブラウザの保存場所は、画面が表示されたあとでないと使えないため、ここで読み込む）
@@ -391,9 +409,12 @@
     <p class="status-caption">目標の音（{currentIndex + 1} / {notes.length}）</p>
     <p class="status-main">{noteToText(notes[currentIndex])}</p>
   {:else if phase === "finished"}
-    <!-- 最後まで進んだ -->
-    <p class="status-caption">　</p>
-    <p class="status-main finished">おわり</p>
+    <!-- 最後まで進んだ：全体の点数と、結果の種類ごとの数を表示する -->
+    <p class="status-caption">点数</p>
+    <p class="status-main finished">{totalScore} 点</p>
+    <p class="status-caption">
+      OK {statusCounts.ok}　高い {statusCounts.high}　低い {statusCounts.low}　音なし {statusCounts.none}
+    </p>
   {:else}
     <!-- 始める前：やり方を案内する -->
     <p class="status-caption">「始める」を押すと、カウントが{countInBeats}拍鳴ります</p>
@@ -415,6 +436,8 @@
         {#if result.cents !== null}
           {formatCents(result.cents)}
         {/if}
+        <!-- この音の点数 -->
+        <span class="result-note">{centsToPoints(result.cents)}点</span>
       </li>
     {/each}
   </ul>
