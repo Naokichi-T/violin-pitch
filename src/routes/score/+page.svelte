@@ -2,6 +2,9 @@
   // 楽譜のデータに関する設定値と関数を読み込む
   import { STEP_NAMES, OCTAVES, isInRange, noteToText } from "#lib/score.js";
 
+  // 五線譜を描く部品を読み込む
+  import Staff from "#lib/Staff.svelte";
+
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
   // 登録した音の並び（音のデータの配列）。最初は空
@@ -81,7 +84,10 @@
 
   <h1>楽譜の編集</h1>
 
-  <!-- 登録した音の一覧（今は文字で表示。あとで五線譜に置き換える） -->
+  <!-- 五線譜（今は五線とト音記号だけ。次の段階で音符を表示する） -->
+  <Staff />
+
+  <!-- 登録した音の一覧（確認用として、五線譜の下に文字でも表示する） -->
   <div class="note-list">
     {#if notes.length === 0}
       <span class="empty">まだ音がありません</span>
