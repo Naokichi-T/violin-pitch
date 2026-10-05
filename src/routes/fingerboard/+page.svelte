@@ -1,12 +1,25 @@
 <script>
   // onMount：このページが画面に表示された直後に処理をするための仕組み
-  import { onMount } from "svelte";
+  // onDestroy：このページが画面から消えるときに後片付けをするための仕組み
+  import { onMount, onDestroy } from "svelte";
 
   // 調のデータに関する設定値と関数を読み込む
   import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames } from "#lib/key.js";
 
-  // 作業中の楽譜を読み込む関数を読み込む（最初に表示する調を決めるために使う）
-  import { loadCurrentScore } from "#lib/settings.js";
+  // 作業中の楽譜を読み込む関数（最初に表示する調を決めるために使う）と、保存された音律を読み込む関数を読み込む
+  import { loadCurrentScore, loadTemperamentId } from "#lib/settings.js";
+
+  // 音律の一覧と最初の設定、周波数を計算する関数、開放弦の周波数を返す関数を読み込む
+  import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID, getFrequency, getOpenStringFrequency } from "#lib/tuning.js";
+
+  // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む
+  import { playTone, stopTone } from "#lib/audio.js";
+
+  // 音のデータを表示用の文字にする関数を読み込む
+  import { noteToText } from "#lib/score.js";
+
+  // 弦の一覧（どの弦の音かを表示するために使う）と、印の id を作る関数を読み込む
+  import { STRINGS, getMarkerId } from "#lib/fingerboard.js";
 
   // 指板の図を描く部品を読み込む
   import Fingerboard from "#lib/Fingerboard.svelte";
@@ -36,6 +49,20 @@
   // 印の中に書くもの（"name"：音名、"finger"：指番号）
   let labelMode = $state("name");
 
+  // 選択中の音律の id。印を押したときに鳴らす音の高さを決めるために使う
+  // 最初は決まった設定にしておき、画面に表示された後で、保存された設定に入れ替える
+  // （このページで変えても保存はしない。楽譜の編集ページの音律には影響しない）
+  let temperamentId = $state(DEFAULT_TEMPERAMENT_ID);
+
+  // 最後に押した印のデータ。まだ押していないときは null
+  let selectedMarker = $state(null);
+
+  // 最後に鳴らした音の周波数（Hz）。まだ鳴らしていないときは null
+  let playedFrequency = $state(null);
+
+  // 選択中の印の id（押していないときは null）。図の中で、その印を目立たせるために渡す
+  let selectedId = $derived(selectedMarker === null ? null : getMarkerId(selectedMarker));
+
   // 選択中の調のデータ
   // $derived を付けると、keyId が変わるたびに自動で探し直される
   let currentKey = $derived(getKey(keyId));
@@ -48,6 +75,9 @@
   // 2. 付いていなければ、作業中の楽譜の調にする
   // 3. どちらもなければ、ハ長調のまま
   onMount(() => {
+    // 保存された音律を読み込む
+    temperamentId = loadTemperamentId();
+
     // アドレスの「?」より後ろの部分から、key の値を取り出す（付いていないときは null）
     const keyFromAddress = new URLSearchParams(location.search).get("key");
 
@@ -64,6 +94,49 @@
       keyId = getKey(currentScore.keyId).id;
     }
   });
+
+  // このページが画面から消えるときに、鳴っている音を止める
+  // （止めないと、別のページに移っても音が鳴り続けてしまうため）
+  onDestroy(() => {
+    stopTone();
+  });
+
+  // 調が変わったら、印の選択を解除する
+  // （前の調で押した印が、新しい調では別の音になっていたり、無くなっていたりするため）
+  // $effect の中で使っている値（keyId）が変わるたびに、自動で実行される
+  $effect(() => {
+    // keyId を読んでおくことで、調が変わったときに実行されるようにする（値そのものは使わない）
+    keyId;
+
+    selectedMarker = null;
+    playedFrequency = null;
+  });
+
+  /**
+   * 印が押されたときに、その音を鳴らす関数
+   * 開放弦の印は、開放弦の高さ（ラ4＝442Hz から5度ずつ合わせた高さ）で鳴らす。
+   * それ以外の印（音階にない場所の点も含む）は、選択中の調と音律での高さで鳴らす。
+   * @param {object} marker - 押された印のデータ
+   */
+  function playMarker(marker) {
+    // 鳴らす周波数を決める
+    let frequency;
+    if (marker.semitones === 0) {
+      // 開放弦：調弦で決まっている高さ（音律に関係なく、いつも同じ）
+      // 弦の一覧に入っている、開放弦の音のデータから求める
+      frequency = getOpenStringFrequency(STRINGS[marker.stringIndex].openNote);
+    } else {
+      // 指で押さえる音：選択中の調と音律での高さ
+      frequency = getFrequency(marker.note, currentKey, temperamentId);
+    }
+
+    // 音を鳴らす
+    playTone(frequency);
+
+    // どの印を押したかと、鳴らした周波数を覚えておく（図の印を目立たせて、下に周波数を表示する）
+    selectedMarker = marker;
+    playedFrequency = frequency;
+  }
 </script>
 
 <!-- svelte:head の中に書いたものは、ページの「head」（画面には出ない、ページについての情報を書く場所）に入る -->
@@ -72,7 +145,7 @@
   <title>指板の図（ファーストポジション）｜バイオリン音程チェック</title>
 
   <!-- description：検索結果で、見出しの下に出る説明文 -->
-  <meta name="description" content="バイオリンのファーストポジションで、調ごとの音階の音が指板のどこにあるかを図で表示します。音名と指番号を切り替えられます。" />
+  <meta name="description" content="バイオリンのファーストポジションで、調ごとの音階の音が指板のどこにあるかを図で表示します。音名と指番号を切り替えられ、印を押すと、その音が鳴ります。" />
 </svelte:head>
 
 <main>
@@ -113,18 +186,48 @@
   <!-- 選択中の調の音階 -->
   <p class="scale">{scaleNames.join(" ")}</p>
 
-  <!-- 指板の図（調と、印の中に書くものを渡す） -->
-  <Fingerboard key={currentKey} {labelMode} />
+  <!-- 音律のメニューと、押した音の表示を横に並べる -->
+  <div class="sound-row">
+    <!-- 音律のメニュー（印を押したときの、音の高さを決める）。bind:value で、選んだ音律の id が temperamentId に入る -->
+    <select class="temperament-select" aria-label="音律" bind:value={temperamentId}>
+      {#each TEMPERAMENTS as temperament (temperament.id)}
+        <option value={temperament.id}>{temperament.name}</option>
+      {/each}
+    </select>
+
+    <!-- 押した音の表示：まだ押していないときは、押せることを案内する -->
+    <p class="played-info">
+      {#if selectedMarker === null}
+        印や点を押すと、音が鳴ります
+      {:else}
+        <!-- どの弦の、何の音か -->
+        <strong>{STRINGS[selectedMarker.stringIndex].id}線 {noteToText(selectedMarker.note)}</strong>
+
+        <!-- 開放弦か、何の指で押さえるか -->
+        {selectedMarker.semitones === 0 ? "開放弦" : selectedMarker.finger + "の指"}
+
+        <!-- 鳴らした周波数（小数第1位まで） -->
+        {playedFrequency.toFixed(1)} Hz
+      {/if}
+    </p>
+  </div>
+
+  <!-- 指板の図（調と、印の中に書くもの、選択中の印を渡す） -->
+  <!-- 印が押されたら playMarker を呼んでもらう -->
+  <Fingerboard key={currentKey} {labelMode} {selectedId} onselect={playMarker} />
 
   <!-- 図の見方 -->
   <ul class="legend">
     <li><span class="sample tonic"></span>主音（音階の最初の音）</li>
     <li><span class="sample"></span>音階の音</li>
     <li><span class="sample open"></span>開放弦（指で押さえない）</li>
+    <li><span class="sample outside"></span>音階にない音（押すと鳴る）</li>
   </ul>
 
   <p class="note">
     印の位置は、半音ごとの目安です（実際の指の間隔は、高い音ほど少しずつ狭くなります）。<br />
+    開放弦は、調弦の高さ（ラ＝442Hz から5度ずつ）で鳴ります。それ以外は、選んだ調と音律での高さで鳴ります。<br />
+    音階にない音は、♯ の付く調と調号のない調では ♯ の音として、♭ の付く調では ♭ の音として扱います。<br />
     指番号の 0 は開放弦です。♯や♭の多い調では、指番号は目安として見てください。<br />
     短調は、調号どおりの音（自然短音階）を表示しています。
   </p>
@@ -210,6 +313,38 @@
     color: #616161;
   }
 
+  /* 音律のメニューと、押した音の表示を横に並べる */
+  .sound-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  /* 音律のメニュー：指で押しやすい大きさにする */
+  .temperament-select {
+    flex-shrink: 0;
+    padding: 8px 4px;
+    font-size: 0.9rem;
+    border: 1px solid #bdbdbd;
+    border-radius: 8px;
+    background-color: white;
+  }
+
+  /* 押した音の表示 */
+  .played-info {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #616161;
+    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 押した音の、弦と音名：黒い太字 */
+  .played-info strong {
+    color: #212121;
+  }
+
   /* 図の見方：横に並べて、入りきらないときは折り返す */
   .legend {
     display: flex;
@@ -251,6 +386,14 @@
   /* 見本の丸（開放弦）：白地に青い枠 */
   .sample.open {
     background-color: white;
+  }
+
+  /* 見本の点（音階にない音）：小さなグレーの丸 */
+  .sample.outside {
+    width: 9px;
+    height: 9px;
+    background-color: #9e9e9e;
+    border-color: #9e9e9e;
   }
 
   /* 注意書き：小さくグレーで表示する */
