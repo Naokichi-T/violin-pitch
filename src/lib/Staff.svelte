@@ -20,9 +20,10 @@
   // notes         ：表示する音の並び（音のデータの配列）
   // signature     ：調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
   // selectedIndex ：選択中の音が何番目か（0から始まる）。選択していないときは null
+  // playingIndex  ：再生中の音が何番目か（0から始まる）。再生していないときは null
   // onselect      ：音符がタップされたときに呼ぶ関数。何番目の音かを渡す
-  // selectedIndex と onselect は、渡されなかったときのための初期値を決めておく
-  let { notes, signature, selectedIndex = null, onselect = () => {} } = $props();
+  // selectedIndex・playingIndex・onselect は、渡されなかったときのための初期値を決めておく
+  let { notes, signature, selectedIndex = null, playingIndex = null, onselect = () => {} } = $props();
 
   // 音の並びを、1段ぶん（8音）ずつに分けたもの
   // $derived を付けると、notes が変わるたびに自動で分け直される
@@ -86,6 +87,7 @@
       <g
         class="note"
         class:selected={noteIndex === selectedIndex}
+        class:playing={noteIndex === playingIndex}
         role="button"
         tabindex="0"
         aria-label="{noteIndex + 1}番目の音"
@@ -196,6 +198,23 @@
   .note.selected .stem,
   .note.selected .ledger-line {
     stroke: #0d47a1;
+  }
+
+  /* 再生中の音符：帯を薄いオレンジにする */
+  /* 選択中のスタイルより後に書いているので、選択中の音が再生されたときはオレンジが優先される */
+  .note.playing .hit-area {
+    fill: #ffe0b2;
+  }
+
+  /* 再生中の音符：玉と変化記号をオレンジにする */
+  .note.playing .glyph {
+    fill: #e65100;
+  }
+
+  /* 再生中の音符：棒と加線をオレンジにする */
+  .note.playing .stem,
+  .note.playing .ledger-line {
+    stroke: #e65100;
   }
 
   /* キーボードで音符に移動したとき：どの音符にいるか分かるように、帯に枠を付ける */

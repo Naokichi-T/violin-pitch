@@ -1,12 +1,13 @@
 <script>
+  // onMount：このページが画面に表示された直後に処理をするための仕組み
+  // onDestroy：このページが画面から消えるときに後片付けをするための仕組み
+  import { onMount, onDestroy } from "svelte";
+
   // 楽譜のデータに関する設定値と関数を読み込む
   import { STEP_NAMES, OCTAVES, isInRange, noteToText, accidentalToText } from "#lib/score.js";
 
   // 調のデータに関する設定値と関数を読み込む
   import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames, getSignatureAccidentals } from "#lib/key.js";
-
-  // onMount：このページが画面に表示された直後に処理をするための仕組み
-  import { onMount } from "svelte";
 
   // 音律の一覧と、周波数や平均律からのズレを計算する関数を読み込む
   import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID, getTemperament, getFrequency, getCentsFromEqual } from "#lib/tuning.js";
@@ -14,8 +15,8 @@
   // 設定（音律、音を鳴らすかどうか）をブラウザに保存する関数と、読み込む関数を読み込む
   import { loadTemperamentId, saveTemperamentId, loadSoundEnabled, saveSoundEnabled } from "#lib/settings.js";
 
-  // 指定した周波数の音を鳴らす関数を読み込む
-  import { playTone } from "#lib/audio.js";
+  // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む
+  import { playTone, stopTone } from "#lib/audio.js";
 
   // ズレ（セント）を「+3」「−8」のような表示用の文字にする関数を読み込む
   import { formatCents } from "#lib/note.js";
@@ -30,6 +31,18 @@
 
   // 短調だけを取り出した一覧
   const minorKeys = KEYS.filter((key) => key.mode === "minor");
+
+  // ===== 再生に関する設定値 =====
+
+  // テンポ（1分間の拍の数）の最小・最大・最初の値と、ボタン1回で変わる量
+  const TEMPO_MIN = 40;
+  const TEMPO_MAX = 200;
+  const TEMPO_DEFAULT = 60;
+  const TEMPO_STEP = 5;
+
+  // 1拍の長さのうち、実際に音を鳴らす割合
+  // 1拍ぶん全部を鳴らすと次の音とつながってしまうので、少し短くして音の区切りを作る
+  const NOTE_LENGTH_RATIO = 0.9;
 
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
@@ -51,7 +64,7 @@
   let keyAccidentals = $derived(getSignatureAccidentals(currentKey.signature));
 
   // 選択中の音律の id
-  // 最初は決まった設定（純正律）にしておき、画面に表示された後で、保存された設定に入れ替える
+  // 最初は決まった設定にしておき、画面に表示された後で、保存された設定に入れ替える
   let temperamentId = $state(DEFAULT_TEMPERAMENT_ID);
 
   // 選択中の音律のデータ（説明の文を表示するために使う）
@@ -61,6 +74,45 @@
   // 最初は「鳴らす」にしておき、画面に表示された後で、保存された設定に入れ替える
   let soundEnabled = $state(true);
 
+  // 選択中のオクターブ（最初は4）
+  let selectedOctave = $state(4);
+
+  // 選択中の変化記号。次の4つのどれかが入る
+  //   null：選択なし（調号どおりの音になる）
+  //   1   ：♯
+  //   -1  ：♭
+  //   0   ：♮（調号を打ち消して、何も付かない音にする）
+  let selectedAccidental = $state(null);
+
+  // 選択中の音が何番目か（0から始まる）。選択していないときは null
+  let selectedIndex = $state(null);
+
+  // 選んだ音に対して、音名ボタンで何をするか
+  //   'replace'：選んだ音を置き換える
+  //   'insert' ：選んだ音の前に挿入する
+  // 音を選んでいないときは使わない（そのときは、いつも最後に追加する）
+  let editMode = $state("replace");
+
+  // テンポ（1分間の拍の数）。四分音符1つが1拍
+  let tempo = $state(TEMPO_DEFAULT);
+
+  // 楽譜を再生しているかどうか（true：再生中、false：停止中）
+  let isPlaying = $state(false);
+
+  // 再生中に、今鳴っている音が何番目か（0から始まる）。再生していないときは null
+  let playingIndex = $state(null);
+
+  // ===== 再生のために覚えておく値（画面には表示しないので $state は付けない） =====
+
+  // 次の音を鳴らすための予約の番号（停止するときに、予約を取り消すために使う）
+  let playbackTimer = null;
+
+  // 再生を始めた時刻（ページを開いてからのミリ秒）
+  let playbackStartTime = 0;
+
+  // 再生を始めた音が何番目か
+  let playbackStartIndex = 0;
+
   // このページが画面に表示された直後に、保存された設定をブラウザから読み込む
   // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
   onMount(() => {
@@ -68,9 +120,15 @@
     soundEnabled = loadSoundEnabled();
   });
 
+  // このページが画面から消えるときに、再生を止める
+  // （止めないと、別のページに移っても音が鳴り続けてしまうため）
+  onDestroy(() => {
+    stopPlayback();
+  });
+
   /**
    * 音を鳴らすかどうかを切り替える関数
-   * 「鳴らす」「鳴らさない」のボタンを押したときに呼ばれる。
+   * チェックボックスを切り替えたときに呼ばれる。
    * 設定を切り替えて、次に開いたときのためにブラウザに保存する。
    * @param {boolean} enabled - 鳴らすなら true、鳴らさないなら false
    */
@@ -95,25 +153,6 @@
     // ブラウザに保存する
     saveTemperamentId(id);
   }
-
-  // 選択中のオクターブ（最初は4）
-  let selectedOctave = $state(4);
-
-  // 選択中の変化記号。次の4つのどれかが入る
-  //   null：選択なし（調号どおりの音になる）
-  //   1   ：♯
-  //   -1  ：♭
-  //   0   ：♮（調号を打ち消して、何も付かない音にする）
-  let selectedAccidental = $state(null);
-
-  // 選択中の音が何番目か（0から始まる）。選択していないときは null
-  let selectedIndex = $state(null);
-
-  // 選んだ音に対して、音名ボタンで何をするか
-  //   'replace'：選んだ音を置き換える
-  //   'insert' ：選んだ音の前に挿入する
-  // 音を選んでいないときは使わない（そのときは、いつも最後に追加する）
-  let editMode = $state("replace");
 
   /**
    * 今選んでいるオクターブと変化記号で、音のデータを作る関数
@@ -273,6 +312,95 @@
       editMode = "replace";
     }
   }
+
+  /**
+   * テンポを変える関数
+   * テンポの「−」「＋」ボタンを押したときに呼ばれる。
+   * @param {number} amount - 変える量（遅くするときはマイナス、速くするときはプラス）
+   */
+  function changeTempo(amount) {
+    // 変えた後の値が、最小と最大の間に収まるようにする
+    tempo = Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, tempo + amount));
+  }
+
+  /**
+   * 楽譜の再生を始める関数
+   * 再生ボタンを押したときに呼ばれる。
+   * 音を選んでいるときはその音から、選んでいないときは最初から再生する。
+   */
+  function startPlayback() {
+    // 音が1つもないときは、何もしない
+    if (notes.length === 0) {
+      return;
+    }
+
+    // 再生を始める位置を決める（音を選んでいればその音、選んでいなければ最初の音）
+    playbackStartIndex = selectedIndex === null ? 0 : selectedIndex;
+
+    // 再生を始めた時刻を覚えておく（それぞれの音を鳴らす時刻を計算するために使う）
+    // performance.now() は、ページを開いてからの時間をミリ秒で返す
+    playbackStartTime = performance.now();
+
+    // 再生中にする
+    isPlaying = true;
+
+    // 最初の音を鳴らす（そのあとは playStep が、次の音を順に予約していく）
+    playStep(playbackStartIndex);
+  }
+
+  /**
+   * 再生中に、音を1つ鳴らして、次の音を予約する関数
+   * 1拍ごとに呼ばれて、最後の音まで順に進む。
+   * @param {number} index - 鳴らす音が何番目か（0から始まる）
+   */
+  function playStep(index) {
+    // 最後の音まで鳴らし終わったとき（または途中で音が減ったとき）は、再生を終わる
+    if (index >= notes.length) {
+      stopPlayback();
+      return;
+    }
+
+    // 今鳴っている音の位置を更新する（五線譜と文字の一覧に色が付く）
+    playingIndex = index;
+
+    // 1拍の長さ（秒）。テンポ60なら1秒、テンポ120なら0.5秒
+    const beatSeconds = 60 / tempo;
+
+    // この音を、選択中の調と音律での高さで鳴らす
+    // 再生は、「音を入れたとき・選んだときに音を鳴らす」の設定に関係なく鳴らす
+    const frequency = getFrequency(notes[index], currentKey, temperamentId);
+    playTone(frequency, beatSeconds * NOTE_LENGTH_RATIO);
+
+    // 次の音を鳴らす時刻を、再生を始めた時刻から計算する
+    // （「今から1拍後」と数えていくと、少しずつ遅れが積み重なるため）
+    const beatsFromStart = index - playbackStartIndex + 1;
+    const nextTime = playbackStartTime + beatsFromStart * beatSeconds * 1000;
+
+    // 次の音までの待ち時間（ミリ秒）。すでに過ぎていたら、すぐに鳴らす
+    const delay = Math.max(0, nextTime - performance.now());
+
+    // 待ち時間のあとに、次の音でこの関数をもう一度呼ぶように予約する
+    playbackTimer = setTimeout(() => playStep(index + 1), delay);
+  }
+
+  /**
+   * 楽譜の再生を止める関数
+   * 停止ボタンを押したとき、最後まで再生し終わったとき、ページを離れるときに呼ばれる。
+   */
+  function stopPlayback() {
+    // 次の音の予約を取り消す
+    if (playbackTimer !== null) {
+      clearTimeout(playbackTimer);
+      playbackTimer = null;
+    }
+
+    // 鳴っている音を止める
+    stopTone();
+
+    // 停止中に戻し、音符の色も元に戻す
+    isPlaying = false;
+    playingIndex = null;
+  }
 </script>
 
 <main>
@@ -332,8 +460,9 @@
   </label>
 
   <!-- 五線譜（登録した音の並びと、調号の数を渡して表示する） -->
-  <!-- selectedIndex で選択中の音を伝え、音符がタップされたら selectNote を呼んでもらう -->
-  <Staff {notes} signature={currentKey.signature} {selectedIndex} onselect={selectNote} />
+  <!-- selectedIndex で選択中の音を、playingIndex で再生中の音を伝える -->
+  <!-- 音符がタップされたら selectNote を呼んでもらう -->
+  <Staff {notes} signature={currentKey.signature} {selectedIndex} {playingIndex} onselect={selectNote} />
 
   <!-- 登録した音の一覧（五線譜の下に文字でも表示する。タップして音を選べる） -->
   <!-- こちらは調号に関係なく、実際に鳴る音をそのまま表示する -->
@@ -343,8 +472,8 @@
     {:else}
       <!-- 音を1つずつ取り出して、押せるボタンにして並べる -->
       {#each notes as note, index (index)}
-        <!-- 選択中の音には selected クラスを付けて色を変える -->
-        <button class="note-item" class:selected={selectedIndex === index} onclick={() => selectNote(index)}>
+        <!-- 選択中の音には selected クラス、再生中の音には playing クラスを付けて色を変える -->
+        <button class="note-item" class:selected={selectedIndex === index} class:playing={playingIndex === index} onclick={() => selectNote(index)}>
           {noteToText(note)}
         </button>
       {/each}
@@ -365,6 +494,35 @@
       {formatCents(getCentsFromEqual(selectedNote, currentKey, temperamentId))} セント）
     {/if}
   </p>
+
+  <!-- 再生（テンポの指定と、再生・停止のボタン） -->
+  <p class="label">再生</p>
+  <div class="playback-row">
+    <!-- 今のテンポ。♩＝60 は「四分音符を1分間に60回」という意味 -->
+    <span class="tempo-text">♩＝{tempo}</span>
+
+    <!-- テンポを遅くするボタン（再生中と、これ以上遅くできないときは押せない） -->
+    <!-- aria-label は、読み上げで操作する人のための、ボタンの説明 -->
+    <button class="tempo-button" aria-label="テンポを遅くする" disabled={isPlaying || tempo <= TEMPO_MIN} onclick={() => changeTempo(-TEMPO_STEP)}> − </button>
+
+    <!-- テンポを速くするボタン（再生中と、これ以上速くできないときは押せない） -->
+    <button class="tempo-button" aria-label="テンポを速くする" disabled={isPlaying || tempo >= TEMPO_MAX} onclick={() => changeTempo(TEMPO_STEP)}> ＋ </button>
+
+    <!-- 再生中は「停止」ボタン、停止中は「再生」ボタンを表示する -->
+    {#if isPlaying}
+      <button class="play-button stop" onclick={stopPlayback}>■ 停止</button>
+    {:else}
+      <!-- 音が1つもないときは押せない -->
+      <!-- 音を選んでいるかどうかで、どこから再生するかをボタンの文字で案内する -->
+      <button class="play-button start" disabled={notes.length === 0} onclick={startPlayback}>
+        {#if selectedIndex === null}
+          ▶ 最初から再生
+        {:else}
+          ▶ {selectedIndex + 1}番目から再生
+        {/if}
+      </button>
+    {/if}
+  </div>
 
   <!-- オクターブの選択 -->
   <p class="label">オクターブ</p>
@@ -528,6 +686,14 @@
     border-color: #0d47a1;
   }
 
+  /* 一覧の中の1音（再生中）：五線譜の再生中の色に合わせて、オレンジの枠と文字にする */
+  /* 選択中のスタイルより後に書いているので、選択中の音が再生されたときはオレンジが優先される */
+  button.note-item.playing {
+    color: #e65100;
+    background-color: #ffe0b2;
+    border-color: #e65100;
+  }
+
   /* 登録した音の数 */
   .note-count {
     margin: 4px 0 0 0;
@@ -556,6 +722,48 @@
   .replace-hint {
     color: #c62828;
     font-weight: bold;
+  }
+
+  /* 再生のエリア：テンポの表示・テンポのボタン・再生ボタンを横に並べる */
+  .playback-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* テンポの表示（♩＝60） */
+  .tempo-text {
+    /* テンポが3けたになっても横幅が変わらないように、幅を決めておく */
+    min-width: 4.5em;
+    font-size: 1.1rem;
+    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* テンポの「−」「＋」ボタン：小さな正方形に近い形にする */
+  button.tempo-button {
+    width: 48px;
+    flex-shrink: 0;
+    color: #1976d2;
+    background-color: white;
+    border: 2px solid #1976d2;
+  }
+
+  /* 再生・停止ボタン：残りの横幅いっぱいに広げる */
+  button.play-button {
+    flex: 1;
+    color: white;
+    border: none;
+  }
+
+  /* 再生ボタン（緑） */
+  button.play-button.start {
+    background-color: #2e7d32;
+  }
+
+  /* 停止ボタン（赤） */
+  button.play-button.stop {
+    background-color: #c62828;
   }
 
   /* オクターブと変化記号のボタンを横に並べる */
@@ -610,7 +818,7 @@
     white-space: nowrap;
   }
 
-  /* 「1つ消す」ボタン：赤。横幅いっぱいに表示する */
+  /* 「消す」ボタン：赤。横幅いっぱいに表示する */
   button.remove {
     width: 100%;
     margin-top: 24px;
