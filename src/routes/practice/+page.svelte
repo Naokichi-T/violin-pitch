@@ -82,6 +82,9 @@
   // まだ1回もタップしていないときは null
   let pendingIndex = $state(null);
 
+  // 最後の音まで行ったら、最初の音に戻ってくり返すかどうか（true：くり返す）
+  let repeatEnabled = $state(false);
+
   // 練習する音の並び。区間を決めているときは、その区間の音だけを取り出したもの
   // notes.slice(始め, 終わりの次) は、配列の一部分を取り出して、新しい配列を作る
   let practiceNotes = $derived(rangeStart === null ? notes : notes.slice(rangeStart, rangeEnd + 1));
@@ -256,6 +259,14 @@
       <button class="range-button" disabled={isSelectingRange} onclick={openRangeSelector}> 変更 </button>
     </div>
 
+    <!-- くり返しの設定 -->
+    <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
+    <!-- bind:checked を付けると、チェックの状態と repeatEnabled の値が、いつも同じになる -->
+    <label class="repeat-row">
+      <input type="checkbox" bind:checked={repeatEnabled} />
+      くり返す（最後の音まで行ったら、最初の音に戻る）
+    </label>
+
     <!-- 練習のモードの切り替え：名前と短い説明を付けたボタンを横に並べる -->
     <div class="mode-row">
       {#each MODES as mode (mode.id)}
@@ -333,8 +344,8 @@
       <!-- （区間を変えたら、前の区間での進み具合や結果を消して、最初の音からやり直すため） -->
       {#key rangeKey}
         {#if modeId === "step"}
-          <!-- 「じっくり」モード：練習する音・調・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
-          <StepPractice notes={practiceNotes} {currentKey} {temperamentId} {tolerance} {allowOpenString} />
+          <!-- 「じっくり」モード：練習する音・調・音律・OK の範囲・開放弦を OK にするかどうか・くり返すかどうかを渡す -->
+          <StepPractice notes={practiceNotes} {currentKey} {temperamentId} {tolerance} {allowOpenString} {repeatEnabled} />
         {:else}
           <!-- 「通し」モード：練習する音・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
           <RunPractice notes={practiceNotes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} {allowOpenString} />
@@ -438,6 +449,17 @@
   button.range-button:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+  }
+
+  /* くり返しの設定：チェックボックスと文字を横に並べ、小さくグレーで表示する */
+  .repeat-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    color: #616161;
+    cursor: pointer;
   }
 
   /* 区間を選ぶエリア：薄い青の枠で囲んで、ふだんの練習の画面と違うことが分かるようにする */

@@ -38,7 +38,8 @@
   // temperamentId ：音律の id
   // tolerance     ：「OK」とする範囲（セント）。判定のレベルによって変わる
   // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか（true：する）
-  let { notes, currentKey, temperamentId, tolerance, allowOpenString } = $props();
+  // repeatEnabled  ：最後の音まで弾けたら、最初の音に戻ってくり返すかどうか（true：くり返す）
+  let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled } = $props();
 
   // ===== 判定に関する設定値 =====
 
@@ -345,6 +346,15 @@
     return chimeFrequency;
   }
 
+  // ===== くり返し =====
+
+  // 終わりの合図（2音）を鳴らしたあと、くり返しで最初の音に戻ったときに、判定を待つ時間（ミリ秒）
+  // 終わりの合図は、通過の合図より長いので、そのぶん長く待つ
+  const WAIT_AFTER_FINISH_CHIME_MILLISECONDS = 800;
+
+  // くり返しで、最後まで弾けた回数（1回最後まで弾くたびに1増える）
+  let completedRounds = $state(0);
+
   /**
    * 今の目標の音を通過して、次の音へ進む関数
    * OK を必要な時間だけ保てたときに呼ばれる。
@@ -359,14 +369,39 @@
     // 合図の音の高さ（通過した音の2オクターブ上）
     const chimeFrequency = getChimeFrequency(targetFrequency);
 
-    // 最後の音だったときは、ここで終わる
+    // 最後の音だったとき
     if (targetIndex === notes.length - 1) {
-      isFinished = true;
-
       // 終わりの合図：通過した音の高さと、その5度上（周波数が1.5倍）の音を続けて鳴らす
       if (chimeEnabled) {
         playChime([chimeFrequency, chimeFrequency * 1.5]);
       }
+
+      // くり返さないときは、ここで終わる
+      if (!repeatEnabled) {
+        isFinished = true;
+        return;
+      }
+
+      // ===== ここから下は、くり返すとき：最初の音に戻る =====
+
+      // 最後まで弾けた回数を1増やす
+      completedRounds = completedRounds + 1;
+
+      // 最後の音の周波数を覚えておく（最初の音と同じ高さかどうかを調べるため）
+      const lastFrequency = targetFrequency;
+
+      // 通過した印を全部消して、最初の音を目標にする
+      passed = [];
+      targetIndex = 0;
+
+      // 合図の音でマイクの検出が乱れるので、少しの間、判定を待つ
+      const waitAfterFinish = chimeEnabled ? WAIT_AFTER_FINISH_CHIME_MILLISECONDS : WAIT_AFTER_ADVANCE_MILLISECONDS;
+      waitUntil = performance.now() + waitAfterFinish;
+
+      // 最初の音が最後の音とほぼ同じ高さのときは、いったん音が途切れるまで判定を待つ
+      // （最後の音を弾き続けているだけで、最初の音も通過してしまうのを防ぐため）
+      const centsFromLast = 1200 * Math.log2(targetFrequency / lastFrequency);
+      needRelease = Math.abs(centsFromLast) < SAME_PITCH_CENTS;
 
       return;
     }
@@ -401,6 +436,9 @@
     // どの音も通過していない状態に戻す
     passed = [];
     isFinished = false;
+
+    // くり返しで弾けた回数も、最初に戻す
+    completedRounds = 0;
 
     // 最初の音を目標にする
     targetIndex = 0;
@@ -466,7 +504,13 @@
 
 <!-- 目標の音の表示 -->
 <div class="target-area">
-  <p class="target-caption">目標の音（{targetIndex + 1} / {notes.length}）</p>
+  <p class="target-caption">
+    目標の音（{targetIndex + 1} / {notes.length}）
+    <!-- くり返すときは、今が何回目かも表示する（弾けた回数 ＋ 1 が、今の回） -->
+    {#if repeatEnabled}
+      ・くり返し {completedRounds + 1}回目
+    {/if}
+  </p>
 
   <!-- 音名を大きく表示する -->
   <p class="target-name">{noteToText(targetNote)}</p>
