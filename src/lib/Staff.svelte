@@ -137,6 +137,10 @@
     display: block;
     width: 100%;
     height: auto;
+    /* 記号は文字として表示しているが、文章ではないので、選択できないようにする */
+    /* （タップしたときに、ブラウザが文字入力用のカーソルを出すのを防ぐ） */
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   /* 五線の線 */
@@ -168,6 +172,8 @@
     /* タップしたときにブラウザが付ける枠や色を消す（選択中の表示は自分で付けるため） */
     outline: none;
     -webkit-tap-highlight-color: transparent;
+    /* 文字入力用のカーソルが出てしまった場合でも、見えないようにする */
+    caret-color: transparent;
   }
 
   /* タップできる範囲：ふだんは透明 */
