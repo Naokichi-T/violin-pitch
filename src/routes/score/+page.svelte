@@ -1,11 +1,132 @@
+<script>
+  // 楽譜のデータに関する設定値と関数を読み込む
+  import { STEP_NAMES, OCTAVES, isInRange, noteToText } from "#lib/score.js";
+
+  // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
+
+  // 登録した音の並び（音のデータの配列）。最初は空
+  let notes = $state([]);
+
+  // 選択中のオクターブ（最初は4）
+  let selectedOctave = $state(4);
+
+  // 選択中の変化記号（1 が♯、-1 が♭、0 がなし）。最初はなし
+  let selectedAccidental = $state(0);
+
+  /**
+   * 今選んでいるオクターブと変化記号で、音のデータを作る関数
+   * 実際に追加するときと、ボタンを押せるかどうかを調べるときの両方で使う。
+   * @param {number} step - 音名の番号（0〜6。0 がド、6 がシ）
+   * @returns {{step: number, accidental: number, octave: number}} 音のデータ
+   */
+  function createNote(step) {
+    return {
+      step: step,
+      accidental: selectedAccidental,
+      octave: selectedOctave,
+    };
+  }
+
+  /**
+   * 音を追加する関数
+   * 音名ボタンを押したときに呼ばれる。
+   * 今選んでいるオクターブと変化記号で音を作り、並びの最後に追加する。
+   * @param {number} step - 音名の番号（0〜6。0 がド、6 がシ）
+   */
+  function addNote(step) {
+    // 音のデータを作る
+    const note = createNote(step);
+
+    // 音域の外の音は追加しない（ボタンも押せなくしているが、念のためここでも確認する）
+    if (!isInRange(note)) {
+      return;
+    }
+
+    // 並びの最後に追加する
+    notes.push(note);
+
+    // 変化記号の選択を解除する（♯・♭は次の1音にだけ付けるため）
+    selectedAccidental = 0;
+  }
+
+  /**
+   * 変化記号の選択を切り替える関数
+   * ♯ボタン・♭ボタンを押したときに呼ばれる。
+   * すでに選ばれているものをもう一度押すと、解除される。
+   * @param {number} value - 押したボタンの変化記号（1 が♯、-1 が♭）
+   */
+  function toggleAccidental(value) {
+    if (selectedAccidental === value) {
+      // 同じものをもう一度押したとき：解除する
+      selectedAccidental = 0;
+    } else {
+      // 選ばれていないものを押したとき：それを選ぶ
+      selectedAccidental = value;
+    }
+  }
+
+  /**
+   * 最後の1音を消す関数
+   * 「1つ消す」ボタンを押したときに呼ばれる。
+   */
+  function removeLastNote() {
+    // 並びの最後の1つを取り除く
+    notes.pop();
+  }
+</script>
+
 <main>
   <!-- ホームへ戻るリンク -->
   <a class="back-link" href="/">← ホーム</a>
 
   <h1>楽譜の編集</h1>
 
-  <!-- ここに、調の選択・五線譜・音名ボタンをこれから追加していく -->
-  <p>（準備中）</p>
+  <!-- 登録した音の一覧（今は文字で表示。あとで五線譜に置き換える） -->
+  <div class="note-list">
+    {#if notes.length === 0}
+      <span class="empty">まだ音がありません</span>
+    {:else}
+      <!-- 音を1つずつ取り出して、文字にして並べる -->
+      {#each notes as note, index (index)}
+        <span class="note-item">{noteToText(note)}</span>
+      {/each}
+    {/if}
+  </div>
+
+  <!-- 登録した音の数 -->
+  <p class="note-count">（{notes.length}音）</p>
+
+  <!-- オクターブの選択 -->
+  <p class="label">オクターブ</p>
+  <div class="button-row">
+    {#each OCTAVES as octave (octave)}
+      <!-- 選択中のオクターブには selected クラスを付けて色を変える -->
+      <button class="choice" class:selected={selectedOctave === octave} onclick={() => (selectedOctave = octave)}>
+        {octave}
+      </button>
+    {/each}
+  </div>
+
+  <!-- 変化記号の選択（押すと次の1音にだけ付く。もう一度押すと解除） -->
+  <p class="label">変化記号（次の1音にだけ付きます）</p>
+  <div class="button-row">
+    <button class="choice" class:selected={selectedAccidental === 1} onclick={() => toggleAccidental(1)}> ♯ </button>
+    <button class="choice" class:selected={selectedAccidental === -1} onclick={() => toggleAccidental(-1)}> ♭ </button>
+  </div>
+
+  <!-- 音名ボタン（押すと音が追加される） -->
+  <p class="label">音名</p>
+  <div class="step-row">
+    {#each STEP_NAMES as stepName, step (step)}
+      <!-- 今の選択で音域の外になる音は、ボタンを押せなくする -->
+      <button class="step" disabled={!isInRange(createNote(step))} onclick={() => addNote(step)}>
+        {stepName}
+      </button>
+    {/each}
+  </div>
+
+  <!-- 最後の1音を消すボタン（音が1つもないときは押せない） -->
+  <button class="remove" disabled={notes.length === 0} onclick={removeLastNote}>1つ消す</button>
 </main>
 
 <style>
@@ -29,5 +150,103 @@
   h1 {
     font-size: 1.4rem;
     margin: 0 0 24px 0;
+  }
+
+  /* 登録した音の一覧：枠で囲み、音を横に並べて端で折り返す */
+  .note-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 48px;
+    padding: 12px;
+    border: 1px solid #bdbdbd;
+    border-radius: 8px;
+  }
+
+  /* 音が1つもないときのメッセージ */
+  .empty {
+    color: #757575;
+  }
+
+  /* 一覧の中の1音 */
+  .note-item {
+    padding: 4px 8px;
+    font-size: 1.1rem;
+    background-color: #e3f2fd;
+    border-radius: 4px;
+  }
+
+  /* 登録した音の数 */
+  .note-count {
+    margin: 4px 0 0 0;
+    font-size: 0.9rem;
+    color: #757575;
+    text-align: right;
+  }
+
+  /* 各ボタンの上に付ける見出し */
+  .label {
+    margin: 20px 0 8px 0;
+    font-size: 0.9rem;
+    color: #424242;
+  }
+
+  /* オクターブと変化記号のボタンを横に並べる */
+  .button-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  /* 音名ボタンを7つ、同じ幅で横に並べる */
+  .step-row {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+  }
+
+  /* ボタン共通：指で押しやすい大きさにする */
+  button {
+    padding: 14px 0;
+    font-size: 1.1rem;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  /* 押せない状態のボタン：薄く表示する */
+  button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* オクターブと変化記号のボタン（選択前）：白地に青い枠 */
+  button.choice {
+    flex: 1;
+    color: #1976d2;
+    background-color: white;
+    border: 2px solid #1976d2;
+  }
+
+  /* オクターブと変化記号のボタン（選択中）：青く塗る */
+  button.choice.selected {
+    color: white;
+    background-color: #1976d2;
+  }
+
+  /* 音名ボタン：緑 */
+  button.step {
+    color: white;
+    background-color: #2e7d32;
+    border: none;
+    /* 「ファ」が2文字なので、狭い画面でも収まるように少し小さくする */
+    font-size: 1rem;
+  }
+
+  /* 「1つ消す」ボタン：赤。横幅いっぱいに表示する */
+  button.remove {
+    width: 100%;
+    margin-top: 24px;
+    color: white;
+    background-color: #c62828;
+    border: none;
   }
 </style>
