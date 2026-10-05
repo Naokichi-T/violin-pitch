@@ -5,6 +5,12 @@
   // 調のデータに関する設定値と関数を読み込む
   import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames, getSignatureAccidentals } from "#lib/key.js";
 
+  // 純正律での周波数と、平均律からのズレを計算する関数を読み込む
+  import { getJustFrequency, getCentsFromEqual } from "#lib/tuning.js";
+
+  // ズレ（セント）を「+3」「−8」のような表示用の文字にする関数を読み込む
+  import { formatCents } from "#lib/note.js";
+
   // 五線譜を描く部品を読み込む
   import Staff from "#lib/Staff.svelte";
 
@@ -245,6 +251,18 @@
   <!-- 登録した音の数 -->
   <p class="note-count">（{notes.length}音）</p>
 
+  <!-- 選んだ音の、純正律での周波数と、平均律からのズレ -->
+  <p class="selected-info">
+    {#if selectedIndex === null}
+      音を選ぶと、純正律での周波数を表示します
+    {:else}
+      <!-- 選んだ音のデータを、短い名前で使えるようにしておく -->
+      {@const selectedNote = notes[selectedIndex]}
+      選択中：{noteToText(selectedNote)}　{getJustFrequency(selectedNote, currentKey).toFixed(1)} Hz（平均律より
+      {formatCents(getCentsFromEqual(selectedNote, currentKey))} セント）
+    {/if}
+  </p>
+
   <!-- オクターブの選択 -->
   <p class="label">オクターブ</p>
   <div class="button-row">
@@ -402,6 +420,15 @@
     font-size: 0.9rem;
     color: #757575;
     text-align: right;
+  }
+
+  /* 選んだ音の周波数の表示 */
+  .selected-info {
+    margin: 8px 0 0 0;
+    font-size: 0.9rem;
+    color: #424242;
+    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
+    font-variant-numeric: tabular-nums;
   }
 
   /* 各ボタンの上に付ける見出し */
