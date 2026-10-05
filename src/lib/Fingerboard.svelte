@@ -1,20 +1,21 @@
 <script>
   // 指板の図を描く部品
-  // 選んだ調の音階の音が、ファーストポジションのどこにあるかを、丸い印で表示する。
+  // 選んだ調の音階の音が、選んだポジションのどこにあるかを、丸い印で表示する。
   // 音階にない場所は、小さな薄い点で表示する。
   // 弾く人から見た向き（ナットが上、駒が下）で、左から G線・D線・A線・E線 の順に並べる。
   // 印はタップできる。タップされたら、どの印かを使う側に伝える（音を鳴らすのは、使う側の役目）。
 
-  // 弦の一覧、扱う範囲、印を付ける場所を調べる関数、印の id を作る関数を読み込む
-  import { STRINGS, MAX_SEMITONES, getFingerboardMarkers, getMarkerId } from "#lib/fingerboard.js";
+  // 弦の一覧、ポジションごとの範囲を求める関数、印を付ける場所を調べる関数、印の id を作る関数を読み込む
+  import { STRINGS, getPositionRange, getFingerboardMarkers, getMarkerId } from "#lib/fingerboard.js";
 
   // この部品を使う側から受け取る値
   // key       ：調のデータ
+  // position  ：ポジションの番号（1〜7）
   // labelMode ：印の中に書くもの（"name"：音名、"finger"：指番号）
   // selectedId：選択中の印の id（getMarkerId で作る文字）。選択していないときは null
   // onselect  ：印がタップされたときに呼ぶ関数。タップされた印のデータを渡す
   // selectedId と onselect は、渡されなかったときのための初期値を決めておく
-  let { key, labelMode, selectedId = null, onselect = () => {} } = $props();
+  let { key, position, labelMode, selectedId = null, onselect = () => {} } = $props();
 
   // ===== 図の大きさと位置の設定値（単位は、SVGの中の座標） =====
 
@@ -43,15 +44,66 @@
   // 音階にない場所に表示する、小さな点の半径
   const DOT_RADIUS = 6;
 
+  // 指板の板の、左の端と右の端の横の位置
+  const BOARD_LEFT = FIRST_STRING_X - 30;
+  const BOARD_RIGHT = FIRST_STRING_X + STRING_SPACING * 3 + 30;
+
+  // 第2ポジションより上のとき、ナットと最初の行の間に入れる「途中を省略した印（ギザギザの切れ目）」のための高さ
+  const CUT_SPACE = 34;
+
+  // 切れ目の、上の端と下の端の縦の位置（ナットからの距離）と、ギザギザの山の高さ・幅
+  const CUT_TOP = 12;
+  const CUT_BOTTOM = 26;
+  const CUT_ZIGZAG_HEIGHT = 4;
+  const CUT_ZIGZAG_WIDTH = 15;
+
+  // このポジションで表示する範囲（開放弦から半音いくつ分上か）
+  // $derived を付けると、ポジション（position）が変わるたびに、自動で求め直される
+  let range = $derived(getPositionRange(position));
+
+  // ナットのすぐ下から表示するかどうか（第1ポジションだけ true）
+  // false のときは、途中を省略して、切れ目を入れる
+  let startsAtNut = $derived(range.low <= 1);
+
+  // 一番上の行（範囲の下の端）の、縦の位置
+  // 第1ポジションは、ナットから半音1つ分下。それ以外は、切れ目の分だけ下にずらす
+  let firstRowY = $derived(startsAtNut ? NUT_Y + SEMITONE_SPACING : NUT_Y + CUT_SPACE + MARKER_RADIUS + 8);
+
   // 図の全体の高さ（一番下の印が切れないように、下に余白を足す）
-  const HEIGHT = NUT_Y + MAX_SEMITONES * SEMITONE_SPACING + MARKER_RADIUS + 10;
+  let height = $derived(firstRowY + (range.high - range.low) * SEMITONE_SPACING + MARKER_RADIUS + 10);
+
+  // 切れ目のギザギザの形（多角形の頂点の並び）。板の左の端から右の端まで、山と谷をくり返す
+  const cutPoints = createCutPoints();
 
   // 弦の太さ（左の G線が一番太く、右の E線が一番細い）
   const STRING_WIDTHS = [3.2, 2.6, 2, 1.4];
 
   // 印を付ける場所の一覧
-  // $derived を付けると、調（key）が変わるたびに、自動で調べ直される
-  let markers = $derived(getFingerboardMarkers(key));
+  // $derived を付けると、調（key）かポジション（position）が変わるたびに、自動で調べ直される
+  let markers = $derived(getFingerboardMarkers(key, position));
+
+  /**
+   * 切れ目のギザギザの形を作る関数
+   * 上の辺を左から右へギザギザに進み、下の辺を右から左へギザギザに戻る、多角形の頂点の並びを作る。
+   * @returns {string} SVG の polygon に渡す、頂点の並び（例："15,74 30,78 …"）
+   */
+  function createCutPoints() {
+    const topPoints = [];
+    const bottomPoints = [];
+
+    // 板の左の端から右の端まで、決まった幅ごとに頂点を置く。1つおきに、山と谷を入れ替える
+    let index = 0;
+    for (let x = BOARD_LEFT; x <= BOARD_RIGHT; x += CUT_ZIGZAG_WIDTH) {
+      // 偶数番目は上に、奇数番目は下にずらす
+      const offset = index % 2 === 0 ? -CUT_ZIGZAG_HEIGHT : CUT_ZIGZAG_HEIGHT;
+      topPoints.push(x + "," + (NUT_Y + CUT_TOP + offset));
+      bottomPoints.push(x + "," + (NUT_Y + CUT_BOTTOM + offset));
+      index += 1;
+    }
+
+    // 上の辺（左から右）のあとに、下の辺（右から左）をつなげる
+    return [...topPoints, ...bottomPoints.reverse()].join(" ");
+  }
 
   /**
    * 印の上でキーが押されたときの処理をする関数
@@ -89,16 +141,16 @@
       return OPEN_Y;
     }
 
-    // 押さえる音の印は、ナットから、半音の数だけ下に置く
-    return NUT_Y + semitones * SEMITONE_SPACING;
+    // 押さえる音の印は、一番上の行から、範囲の下の端より半音いくつ分上かの数だけ下に置く
+    return firstRowY + (semitones - range.low) * SEMITONE_SPACING;
   }
 </script>
 
 <!-- viewBox で「中の座標の範囲」を決めておくと、画面の幅に合わせて全体が拡大・縮小される -->
 <!-- role と aria-label は、読み上げで操作する人のための、図の説明（group は「いくつかの部品のまとまり」という意味） -->
-<svg class="fingerboard" viewBox="0 0 {WIDTH} {HEIGHT}" role="group" aria-label="指板の図">
+<svg class="fingerboard" viewBox="0 0 {WIDTH} {height}" role="group" aria-label="指板の図">
   <!-- 指板の板：ナットから下を、黒っぽい色で塗る -->
-  <rect class="board" x={FIRST_STRING_X - 30} y={NUT_Y} width={STRING_SPACING * 3 + 60} height={HEIGHT - NUT_Y} rx="4" />
+  <rect class="board" x={BOARD_LEFT} y={NUT_Y} width={BOARD_RIGHT - BOARD_LEFT} height={height - NUT_Y} rx="4" />
 
   <!-- 弦：4本を、上から下まで引く -->
   {#each STRINGS as string, stringIndex (string.id)}
@@ -106,11 +158,17 @@
     <text class="string-name" x={getStringX(stringIndex)} y={STRING_NAME_Y} text-anchor="middle">{string.id}</text>
 
     <!-- 弦そのもの（太さは弦ごとに変える） -->
-    <line class="string" x1={getStringX(stringIndex)} y1={NUT_Y} x2={getStringX(stringIndex)} y2={HEIGHT} stroke-width={STRING_WIDTHS[stringIndex]} />
+    <line class="string" x1={getStringX(stringIndex)} y1={NUT_Y} x2={getStringX(stringIndex)} y2={height} stroke-width={STRING_WIDTHS[stringIndex]} />
   {/each}
 
   <!-- ナット：指板の上の端の、太い横線 -->
-  <line class="nut" x1={FIRST_STRING_X - 30} y1={NUT_Y} x2={FIRST_STRING_X + STRING_SPACING * 3 + 30} y2={NUT_Y} />
+  <line class="nut" x1={BOARD_LEFT} y1={NUT_Y} x2={BOARD_RIGHT} y2={NUT_Y} />
+
+  <!-- 切れ目：第2ポジションより上のとき、ナットと最初の行の間を省略していることを、ギザギザの白い帯で表す -->
+  <!-- 板と弦の上に重ねて描くので、板と弦が途中で切れているように見える -->
+  {#if !startsAtNut}
+    <polygon class="cut" points={cutPoints} />
+  {/if}
 
   <!-- 印：押せる場所の全部に描く。音階の音は丸と文字、音階にない場所は小さな点にする -->
   {#each markers as marker (getMarkerId(marker))}
@@ -178,6 +236,11 @@
   .nut {
     stroke: #f5e6c8;
     stroke-width: 6;
+  }
+
+  /* 切れ目（途中を省略していることを表す、ギザギザの帯）：背景と同じ白で塗る */
+  .cut {
+    fill: #ffffff;
   }
 
   /* 弦の名前（G・D・A・E） */

@@ -1,5 +1,6 @@
 // 指板（バイオリンの弦を押さえる板）の上で、音がどこにあるかを計算するファイル
-// 今は、ファーストポジション（開放弦から、4の指で届くところまで）だけを扱う。
+// 第1ポジション（ファーストポジション）から第7ポジションまでを扱う。
+// ポジションは、左手を指板のどこに置くかのこと。数字が大きいほど、ナットから離れた（音の高い）場所になる。
 
 // 音番号を計算する関数、音名の一覧、変化記号を文字にする関数を読み込む
 import { getNoteNumber, STEP_NAMES, accidentalToText } from "./score.js";
@@ -19,38 +20,74 @@ export const STRINGS = [
   { id: "E", openNote: { step: 2, accidental: 0, octave: 5 } },
 ];
 
-// ファーストポジションで扱う範囲：開放弦から、半音いくつ分上までか
-// 7 は、4の指でふつうに届く高さ（隣の高い弦の開放弦と同じ音）
-export const MAX_SEMITONES = 7;
+// 選べるポジションの一覧
+//   id   ：ポジションの番号（1〜7）
+//   name ：画面に表示する名前
+export const POSITIONS = [
+  { id: 1, name: "第1ポジション（ファースト）" },
+  { id: 2, name: "第2ポジション（セカンド）" },
+  { id: 3, name: "第3ポジション（サード）" },
+  { id: 4, name: "第4ポジション" },
+  { id: 5, name: "第5ポジション" },
+  { id: 6, name: "第6ポジション" },
+  { id: 7, name: "第7ポジション" },
+];
 
-// 音を探すオクターブの範囲（バイオリンのファーストポジションの音は、この中に全部入る）
-const SEARCH_OCTAVES = [3, 4, 5, 6];
+// 最初に選ばれているポジションの番号
+export const DEFAULT_POSITION_ID = 1;
+
+// 開放弦の音名から、音名でいくつ上か（0〜10）ごとの、開放弦からの半音の数（長音階で数えたとき）
+// 例：音名で3つ上（G線ならド）は、半音5つ分上
+// ポジションごとの、表示する範囲を決めるために使う
+const SEMITONES_BY_STEPS = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17];
+
+// 音を探すオクターブの範囲（この図で扱う音は、この中に全部入る）
+const SEARCH_OCTAVES = [3, 4, 5, 6, 7];
+
+/**
+ * ポジションごとの、指板の図に表示する範囲を求める関数
+ * 範囲は「開放弦から半音いくつ分上か」で表す。
+ * - 下の端：1の指のふつうの場所（開放弦の音名から、ポジションの番号だけ上の音）より、半音1つ下
+ *   （1の指をナットのほうへ引いて押さえる音まで入れるため）
+ * - 上の端：4の指のふつうの場所（1の指の音名から、3つ上の音）
+ * 例：第1ポジションは 1〜7、第3ポジションは 4〜11
+ * @param {number} position - ポジションの番号（1〜7）
+ * @returns {{low: number, high: number}} 表示する範囲（low：下の端、high：上の端）
+ */
+export function getPositionRange(position) {
+  return {
+    low: SEMITONES_BY_STEPS[position] - 1,
+    high: SEMITONES_BY_STEPS[position + 3],
+  };
+}
 
 /**
  * 指番号を決める関数（このファイルの中だけで使う）
- * ファーストポジションでは、開放弦の音名から数えて、1つ上の音名が1の指、2つ上が2の指…となる。
+ * 第1ポジションでは、開放弦の音名から数えて、1つ上の音名が1の指、2つ上が2の指…となる。
  * 例：G線（ソ）なら、ラが1、シが2、ドが3、レが4。♯や♭が付いても、音名が同じなら同じ指。
- * @param {number} step - 押さえる音の、音名の番号（0〜6）
- * @param {number} openStep - その弦の開放弦の、音名の番号（0〜6）
+ * ポジションが1つ上がるごとに、同じ指で押さえる音名が、1つずつ上にずれる。
+ * 例：第3ポジションの G線なら、ドが1、レが2、ミが3、ファが4。
+ * @param {{step: number, accidental: number, octave: number}} note - 押さえる音のデータ
+ * @param {{step: number, accidental: number, octave: number}} openNote - その弦の開放弦の音のデータ
  * @param {number} semitones - 開放弦から半音いくつ分上か
+ * @param {number} position - ポジションの番号（1〜7）
  * @returns {number} 指番号（0 は開放弦、1〜4 は指）
  */
-function getFinger(step, openStep, semitones) {
+function getFinger(note, openNote, semitones, position) {
   // 開放弦そのもの
   if (semitones === 0) {
     return 0;
   }
 
-  // 開放弦の音名から、音名でいくつ上か（0〜6）。7 を足してから割った余りにすると、マイナスにならない
-  const stepsAbove = (step - openStep + 7) % 7;
+  // 開放弦の音名から、音名でいくつ上か（オクターブをまたいでも数えられるように、オクターブ×7 を足して比べる）
+  const stepsAbove = note.octave * 7 + note.step - (openNote.octave * 7 + openNote.step);
 
-  // 開放弦と同じ音名に♯が付いた音（例：G線のソ♯）は、1の指をナットの近くに引いて押さえる
-  if (stepsAbove === 0) {
-    return 1;
-  }
+  // そのポジションでの指番号（第1ポジションなら、音名で1つ上が1の指）
+  const finger = stepsAbove - (position - 1);
 
-  // ♭ の多い調では、音名で数えると5つ上になる音がある（例：A線のファ♭）。指は4本なので、4の指にする
-  return Math.min(stepsAbove, 4);
+  // 1より小さくなる音（例：第1ポジションの G線のソ♯）は、1の指をナットのほうへ引いて押さえる
+  // 4より大きくなる音（♭ の多い調の、A線のファ♭など）は、指は4本なので、4の指にする
+  return Math.min(Math.max(finger, 1), 4);
 }
 
 // 音階にない音の、♯ を使った呼び方。半音の番号（ド＝0、ド♯＝1、…、シ＝11）の順に並べてある
@@ -105,11 +142,12 @@ function createNoteByNumber(step, accidental, number) {
 }
 
 /**
- * ファーストポジションの指板の、押せる場所を全部調べる関数
- * 4本の弦それぞれについて、開放弦から半音7つ分上までの、8つの場所を調べる（全部で32個）。
+ * 選んだポジションの指板の、押せる場所を全部調べる関数
+ * 4本の弦それぞれについて、開放弦と、そのポジションの範囲（getPositionRange）の場所を調べる。
  * その場所の音が、選んだ調の音階の音かどうかも調べる。
  * 音階にない音は、♯ の付く調と調号のない調では ♯ で、♭ の付く調では ♭ で呼ぶ。
  * @param {object} key - 調のデータ
+ * @param {number} position - ポジションの番号（1〜7）
  * @returns {Array} 印を付ける場所の配列。1つの印は次の形
  *   stringIndex：何番目の弦か（0 が G線、3 が E線）
  *   semitones  ：開放弦から半音いくつ分上か（0 は開放弦）
@@ -119,12 +157,21 @@ function createNoteByNumber(step, accidental, number) {
  *   inScale    ：選んだ調の音階の音かどうか
  *   isTonic    ：主音（音階の最初の音）かどうか
  */
-export function getFingerboardMarkers(key) {
+export function getFingerboardMarkers(key, position) {
   // 調号で、7つの音名それぞれに付く変化記号（1 が♯、-1 が♭、0 がなし）
   const accidentals = getSignatureAccidentals(key.signature);
 
   // 音階にない音の呼び方の表（♭ の付く調は ♭、それ以外は ♯）
   const spellings = key.signature < 0 ? FLAT_SPELLINGS : SHARP_SPELLINGS;
+
+  // このポジションで表示する範囲（開放弦から半音いくつ分上か）
+  const range = getPositionRange(position);
+
+  // 調べる場所の一覧：開放弦（0）と、範囲の下の端から上の端まで
+  const semitonesList = [0];
+  for (let semitones = range.low; semitones <= range.high; semitones += 1) {
+    semitonesList.push(semitones);
+  }
 
   const markers = [];
 
@@ -133,8 +180,8 @@ export function getFingerboardMarkers(key) {
     // 開放弦の音番号（半音ごとに1ずつ増える通し番号）
     const openNumber = getNoteNumber(string.openNote);
 
-    // 開放弦から、半音ずつ上の場所を順に調べる
-    for (let semitones = 0; semitones <= MAX_SEMITONES; semitones += 1) {
+    // 調べる場所を、順に調べる
+    for (const semitones of semitonesList) {
       // この場所の音番号
       const number = openNumber + semitones;
 
@@ -162,7 +209,7 @@ export function getFingerboardMarkers(key) {
         semitones: semitones,
         note: note,
         name: STEP_NAMES[note.step] + accidentalToText(note.accidental),
-        finger: getFinger(note.step, string.openNote.step, semitones),
+        finger: getFinger(note, string.openNote, semitones, position),
         inScale: inScale,
         isTonic: inScale && note.step === key.tonicStep,
       });

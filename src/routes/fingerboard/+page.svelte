@@ -18,8 +18,8 @@
   // 音のデータを表示用の文字にする関数を読み込む
   import { noteToText } from "#lib/score.js";
 
-  // 弦の一覧（どの弦の音かを表示するために使う）と、印の id を作る関数を読み込む
-  import { STRINGS, getMarkerId } from "#lib/fingerboard.js";
+  // 弦の一覧（どの弦の音かを表示するために使う）、ポジションの一覧と最初の設定、印の id を作る関数を読み込む
+  import { STRINGS, POSITIONS, DEFAULT_POSITION_ID, getMarkerId } from "#lib/fingerboard.js";
 
   // 指板の図を描く部品を読み込む
   import Fingerboard from "#lib/Fingerboard.svelte";
@@ -45,6 +45,9 @@
 
   // 選択中の調の id（最初はハ長調）
   let keyId = $state(DEFAULT_KEY_ID);
+
+  // 選択中のポジションの番号（最初は第1ポジション）
+  let positionId = $state(DEFAULT_POSITION_ID);
 
   // 印の中に書くもの（"name"：音名、"finger"：指番号）
   let labelMode = $state("name");
@@ -101,12 +104,13 @@
     stopTone();
   });
 
-  // 調が変わったら、印の選択を解除する
-  // （前の調で押した印が、新しい調では別の音になっていたり、無くなっていたりするため）
-  // $effect の中で使っている値（keyId）が変わるたびに、自動で実行される
+  // 調かポジションが変わったら、印の選択を解除する
+  // （前に押した印が、変えたあとでは別の音になっていたり、無くなっていたりするため）
+  // $effect の中で使っている値（keyId と positionId）が変わるたびに、自動で実行される
   $effect(() => {
-    // keyId を読んでおくことで、調が変わったときに実行されるようにする（値そのものは使わない）
+    // keyId と positionId を読んでおくことで、変わったときに実行されるようにする（値そのものは使わない）
     keyId;
+    positionId;
 
     selectedMarker = null;
     playedFrequency = null;
@@ -142,18 +146,17 @@
 <!-- svelte:head の中に書いたものは、ページの「head」（画面には出ない、ページについての情報を書く場所）に入る -->
 <svelte:head>
   <!-- title：ブラウザのタブと、検索結果の見出しに出る -->
-  <title>指板の図（ファーストポジション）｜バイオリン音程チェック</title>
+  <title>指板の図（ポジションごとの音の場所）｜バイオリン音程チェック</title>
 
   <!-- description：検索結果で、見出しの下に出る説明文 -->
-  <meta name="description" content="バイオリンのファーストポジションで、調ごとの音階の音が指板のどこにあるかを図で表示します。音名と指番号を切り替えられ、印を押すと、その音が鳴ります。" />
+  <meta name="description" content="バイオリンの第1〜第7ポジションで、調ごとの音階の音が指板のどこにあるかを図で表示します。音名と指番号を切り替えられ、印を押すと、その音が鳴ります。" />
 </svelte:head>
 
 <main>
-  <!-- 画面の上の行：ホームへ戻るリンク・ページのタイトル・ポジションの名前を横に並べる -->
+  <!-- 画面の上の行：ホームへ戻るリンクと、ページのタイトルを横に並べる -->
   <div class="header-row">
     <a class="back-link" href="/">← ホーム</a>
     <h1>指板の図</h1>
-    <span class="position">ファーストポジション</span>
   </div>
 
   <!-- 調のメニューと、印の中に書くものの切り替えを横に並べる -->
@@ -186,35 +189,42 @@
   <!-- 選択中の調の音階 -->
   <p class="scale">{scaleNames.join(" ")}</p>
 
-  <!-- 音律のメニューと、押した音の表示を横に並べる -->
-  <div class="sound-row">
+  <!-- ポジションのメニューと、音律のメニューを横に並べる -->
+  <div class="menu-row">
+    <!-- ポジションのメニュー。bind:value で、選んだポジションの番号が positionId に入る -->
+    <select class="position-select" aria-label="ポジション" bind:value={positionId}>
+      {#each POSITIONS as position (position.id)}
+        <option value={position.id}>{position.name}</option>
+      {/each}
+    </select>
+
     <!-- 音律のメニュー（印を押したときの、音の高さを決める）。bind:value で、選んだ音律の id が temperamentId に入る -->
     <select class="temperament-select" aria-label="音律" bind:value={temperamentId}>
       {#each TEMPERAMENTS as temperament (temperament.id)}
         <option value={temperament.id}>{temperament.name}</option>
       {/each}
     </select>
-
-    <!-- 押した音の表示：まだ押していないときは、押せることを案内する -->
-    <p class="played-info">
-      {#if selectedMarker === null}
-        印や点を押すと、音が鳴ります
-      {:else}
-        <!-- どの弦の、何の音か -->
-        <strong>{STRINGS[selectedMarker.stringIndex].id}線 {noteToText(selectedMarker.note)}</strong>
-
-        <!-- 開放弦か、何の指で押さえるか -->
-        {selectedMarker.semitones === 0 ? "開放弦" : selectedMarker.finger + "の指"}
-
-        <!-- 鳴らした周波数（小数第1位まで） -->
-        {playedFrequency.toFixed(1)} Hz
-      {/if}
-    </p>
   </div>
 
-  <!-- 指板の図（調と、印の中に書くもの、選択中の印を渡す） -->
+  <!-- 押した音の表示：まだ押していないときは、押せることを案内する -->
+  <p class="played-info">
+    {#if selectedMarker === null}
+      印や点を押すと、音が鳴ります
+    {:else}
+      <!-- どの弦の、何の音か -->
+      <strong>{STRINGS[selectedMarker.stringIndex].id}線 {noteToText(selectedMarker.note)}</strong>
+
+      <!-- 開放弦か、何の指で押さえるか -->
+      {selectedMarker.semitones === 0 ? "開放弦" : selectedMarker.finger + "の指"}
+
+      <!-- 鳴らした周波数（小数第1位まで） -->
+      {playedFrequency.toFixed(1)} Hz
+    {/if}
+  </p>
+
+  <!-- 指板の図（調・ポジション・印の中に書くもの・選択中の印を渡す） -->
   <!-- 印が押されたら playMarker を呼んでもらう -->
-  <Fingerboard key={currentKey} {labelMode} {selectedId} onselect={playMarker} />
+  <Fingerboard key={currentKey} position={positionId} {labelMode} {selectedId} onselect={playMarker} />
 
   <!-- 図の見方 -->
   <ul class="legend">
@@ -226,6 +236,8 @@
 
   <p class="note">
     印の位置は、半音ごとの目安です（実際の指の間隔は、高い音ほど少しずつ狭くなります）。<br />
+    第2ポジションより上では、ナットと最初の行の間を省略しています（ギザギザの切れ目）。開放弦は、どのポジションでも一番上に出します。<br />
+    それぞれのポジションの一番上の行は、1の指をナットのほうへ引いて押さえる場所です。<br />
     開放弦は、調弦の高さ（ラ＝442Hz から5度ずつ）で鳴ります。それ以外は、選んだ調と音律での高さで鳴ります。<br />
     音階にない音は、♯ の付く調と調号のない調では ♯ の音として、♭ の付く調では ♭ の音として扱います。<br />
     指番号の 0 は開放弦です。♯や♭の多い調では、指番号は目安として見てください。<br />
@@ -262,12 +274,6 @@
   h1 {
     font-size: 1.1rem;
     margin: 0;
-  }
-
-  /* ポジションの名前：小さくグレーで表示する */
-  .position {
-    font-size: 0.8rem;
-    color: #616161;
   }
 
   /* 調のメニューと、切り替えのボタンを横に並べる */
@@ -313,17 +319,17 @@
     color: #616161;
   }
 
-  /* 音律のメニューと、押した音の表示を横に並べる */
-  .sound-row {
+  /* ポジションのメニューと、音律のメニューを横に並べる */
+  .menu-row {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
+    gap: 6px;
   }
 
-  /* 音律のメニュー：指で押しやすい大きさにする */
+  /* ポジションと音律のメニュー共通：指で押しやすい大きさにする */
+  .position-select,
   .temperament-select {
-    flex-shrink: 0;
+    /* min-width: 0 を付けると、中の文字が長くても、決めた割合より広がらない */
+    min-width: 0;
     padding: 8px 4px;
     font-size: 0.9rem;
     border: 1px solid #bdbdbd;
@@ -331,9 +337,19 @@
     background-color: white;
   }
 
+  /* ポジションのメニュー：名前が長いので、音律のメニューより広くする（横幅を 3：2 に分ける） */
+  .position-select {
+    flex: 3;
+  }
+
+  /* 音律のメニュー */
+  .temperament-select {
+    flex: 2;
+  }
+
   /* 押した音の表示 */
   .played-info {
-    margin: 0;
+    margin: 8px 0;
     font-size: 0.85rem;
     color: #616161;
     /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
