@@ -1,7 +1,7 @@
 # allow crawling everything by default
-# （すべての検索エンジンに、全部のページを読んでよいと伝えている。Disallow のあとが空なのは「禁止するものなし」の意味）
+# (an empty "Disallow:" means nothing is disallowed)
 User-agent: *
 Disallow:
 
-# サイトマップ（検索に載せたいページの一覧）の場所
+# location of the sitemap (the list of pages to be indexed)
 Sitemap: https://violin-pitch.vercel.app/sitemap.xml
