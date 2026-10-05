@@ -14,6 +14,9 @@
   // 選んだ音律をブラウザに保存する関数と、読み込む関数を読み込む
   import { loadTemperamentId, saveTemperamentId } from "#lib/settings.js";
 
+  // 指定した周波数の音を鳴らす関数を読み込む
+  import { playTone } from "#lib/audio.js";
+
   // ズレ（セント）を「+3」「−8」のような表示用の文字にする関数を読み込む
   import { formatCents } from "#lib/note.js";
 
@@ -132,6 +135,15 @@
   }
 
   /**
+   * 音を1つ鳴らす関数
+   * 音のデータから、選択中の調と音律での周波数を求めて、その高さの音を鳴らす。
+   * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
+   */
+  function playNote(note) {
+    playTone(getFrequency(note, currentKey, temperamentId));
+  }
+
+  /**
    * 音を追加する、選んだ音を置き換える、または選んだ音の前に挿入する関数
    * 音名ボタンを押したときに呼ばれる。
    * 今選んでいるオクターブと変化記号で音を作る。
@@ -167,6 +179,9 @@
 
     // 変化記号の選択を解除する（♯・♭・♮は次の1音にだけ付けるため）
     selectedAccidental = null;
+
+    // 入れた音を鳴らす（追加・置き換え・挿入のどの場合も、耳で確かめられるようにする）
+    playNote(note);
   }
 
   /**
@@ -202,6 +217,9 @@
       // オクターブのボタンを、選んだ音のオクターブに合わせる
       // （同じオクターブの中で直すことが多いので、選び直す手間を減らすため）
       selectedOctave = notes[index].octave;
+
+      // 選んだ音を鳴らす
+      playNote(notes[index]);
     }
 
     // 選び直したときも、解除したときも、「置き換え」に戻す
