@@ -48,6 +48,12 @@
   // 選択中の音が何番目か（0から始まる）。選択していないときは null
   let selectedIndex = $state(null);
 
+  // 選んだ音に対して、音名ボタンで何をするか
+  //   'replace'：選んだ音を置き換える
+  //   'insert' ：選んだ音の前に挿入する
+  // 音を選んでいないときは使わない（そのときは、いつも最後に追加する）
+  let editMode = $state("replace");
+
   /**
    * 今選んでいるオクターブと変化記号で、音のデータを作る関数
    * 実際に追加するとき、ボタンを押せるかどうかを調べるとき、ボタンの文字を作るときに使う。
@@ -87,10 +93,11 @@
   }
 
   /**
-   * 音を追加する、または選んだ音を置き換える関数
+   * 音を追加する、選んだ音を置き換える、または選んだ音の前に挿入する関数
    * 音名ボタンを押したときに呼ばれる。
    * 今選んでいるオクターブと変化記号で音を作る。
-   * 音を選んでいないときは並びの最後に追加し、選んでいるときはその音と入れ替える。
+   * 音を選んでいないときは並びの最後に追加する。
+   * 音を選んでいるときは、editMode に合わせて置き換えるか、前に挿入する。
    * @param {number} step - 音名の番号（0〜6。0 がド、6 がシ）
    */
   function addNote(step) {
@@ -105,10 +112,18 @@
     if (selectedIndex === null) {
       // 音を選んでいないとき：並びの最後に追加する
       notes.push(note);
-    } else {
-      // 音を選んでいるとき：選んだ位置の音を、新しい音に入れ替える
+    } else if (editMode === "replace") {
+      // 置き換えのとき：選んだ位置の音を、新しい音に入れ替える
       // 押し間違えたときにすぐ押し直せるように、選択はそのまま残す
       notes[selectedIndex] = note;
+    } else {
+      // 前に挿入のとき：選んだ位置に新しい音を入れる（選んだ音から後ろは、1つずつ後ろにずれる）
+      // splice(位置, 0, 入れるもの) は、何も取り除かずに、その位置へ入れる命令
+      notes.splice(selectedIndex, 0, note);
+
+      // 元の音は1つ後ろにずれたので、選択の番号も1つ増やして、同じ音を選んだままにする
+      // （続けて押したときに、押した順に並ぶようにするため）
+      selectedIndex = selectedIndex + 1;
     }
 
     // 変化記号の選択を解除する（♯・♭・♮は次の1音にだけ付けるため）
@@ -149,6 +164,10 @@
       // （同じオクターブの中で直すことが多いので、選び直す手間を減らすため）
       selectedOctave = notes[index].octave;
     }
+
+    // 選び直したときも、解除したときも、「置き換え」に戻す
+    // （「前に挿入」のままになっていることに気づかず、音を増やしてしまうのを防ぐため）
+    editMode = "replace";
   }
 
   /**
@@ -167,6 +186,9 @@
 
       // 選択を解除する（続けて押したときに、次の音まで消してしまわないようにするため）
       selectedIndex = null;
+
+      // 選択を解除したので、「置き換え」に戻す
+      editMode = "replace";
     }
   }
 </script>
@@ -243,14 +265,26 @@
     <button class="choice" class:selected={selectedAccidental === 0} onclick={() => toggleAccidental(0)}> ♮ </button>
   </div>
 
-  <!-- 音名ボタン（押すと、音が追加されるか、選んだ音が置き換わる） -->
-  <!-- 見出しで、今どちらの動きになるのかを案内する -->
+  <!-- 選んだ音をどうするかの切り替え（音を選んでいるときだけ表示する） -->
+  {#if selectedIndex !== null}
+    <p class="label">選んだ音をどうするか</p>
+    <div class="button-row">
+      <!-- 選ばれているほうに selected クラスを付けて色を変える -->
+      <button class="choice" class:selected={editMode === "replace"} onclick={() => (editMode = "replace")}> 置き換え </button>
+      <button class="choice" class:selected={editMode === "insert"} onclick={() => (editMode = "insert")}> 前に挿入 </button>
+    </div>
+  {/if}
+
+  <!-- 音名ボタン（押すと、音が追加されるか、選んだ音が置き換わるか、選んだ音の前に入る） -->
+  <!-- 見出しで、今どの動きになるのかを案内する -->
   <p class="label">
     {#if selectedIndex === null}
       音名（最後に追加します）
-    {:else}
-      <!-- 置き換えになることに気づきやすいように、案内の部分だけ赤字にする -->
+    {:else if editMode === "replace"}
+      <!-- 最後に追加する動きではないことに気づきやすいように、案内の部分だけ赤字にする -->
       音名<span class="replace-hint">（{selectedIndex + 1}番目の「{noteToText(notes[selectedIndex])}」を置き換えます）</span>
+    {:else}
+      音名<span class="replace-hint">（{selectedIndex + 1}番目の「{noteToText(notes[selectedIndex])}」の前に挿入します）</span>
     {/if}
   </p>
   <div class="step-row">
