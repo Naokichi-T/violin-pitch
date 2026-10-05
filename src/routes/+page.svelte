@@ -2,6 +2,15 @@
   // onDestroy：このページが画面から消えるときに後片付けをするための仕組み
   import { onDestroy } from "svelte";
 
+  // 音の大きさの計算と、周波数の検出をする関数を読み込む
+  // （このバージョンのSvelteKitでは、src/lib フォルダを「#lib」と書いて指す）
+  import { calculateRms, detectPitch } from "#lib/pitch.js";
+
+  // ===== 設定値 =====
+
+  // 直近の検出値を何回分ためておくか（1秒に約60回検出するので、30回分は約0.5秒分）
+  const HISTORY_SIZE = 30;
+
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
   // マイクが動いているかどうか（true：動作中、false：停止中）
@@ -9,6 +18,15 @@
 
   // 音の大きさ（0〜100）。バーの長さに使う
   let volume = $state(0);
+
+  // 表示する周波数（Hz）。直近の検出値の中央値。検出できていないときは null
+  let frequency = $state(null);
+
+  // 【確認用】直近の検出値の中での最小値（Hz）。検出できていないときは null
+  let frequencyMin = $state(null);
+
+  // 【確認用】直近の検出値の中での最大値（Hz）。検出できていないときは null
+  let frequencyMax = $state(null);
 
   // エラーメッセージ（エラーがないときは空文字）
   let errorMessage = $state("");
@@ -32,6 +50,9 @@
 
   // 波形データを入れておく入れ物（配列）
   let waveform = null;
+
+  // 直近の検出値（Hz）をためておく配列。古いものから順に並ぶ
+  let history = [];
 
   /**
    * マイクを開始する関数
@@ -68,8 +89,9 @@
       // 波形を取り出す部品を作る
       analyser = audioContext.createAnalyser();
 
-      // 一度に取り出す波形データの個数（2048個）
-      analyser.fftSize = 2048;
+      // 一度に取り出す波形データの個数（4096個）
+      // 低い音でも周期を正確に測れるように、多めに取り出す
+      analyser.fftSize = 4096;
 
       // マイクの音を解析用の部品につなぐ
       sourceNode.connect(analyser);
@@ -100,7 +122,7 @@
   /**
    * 繰り返し処理をする関数
    * 画面の描画に合わせて（1秒に約60回）呼ばれ続ける。
-   * 波形データを取り出して、音の大きさを計算する。
+   * 波形データを取り出して、音の大きさと周波数を求める。
    */
   function update() {
     // 最新の波形データを入れ物に取り出す（値は -1 〜 1 の範囲）
@@ -113,27 +135,58 @@
     // rms はとても小さい値なので 300 倍し、100 を超えないようにする
     volume = Math.min(100, rms * 300);
 
+    // 波形から周波数を検出する（検出できなかったときは null が入る）
+    // audioContext.sampleRate は、1秒あたりのデータ数（例：48000）
+    const detected = detectPitch(waveform, audioContext.sampleRate);
+
+    if (detected === null) {
+      // 検出できなかったとき：ためた値を消して、表示を「---」に戻す
+      history = [];
+      frequency = null;
+      frequencyMin = null;
+      frequencyMax = null;
+    } else {
+      // 検出できたとき：検出値を配列の最後に追加する
+      history.push(detected);
+
+      // ためる個数の上限を超えたら、一番古い値（先頭）を捨てる
+      if (history.length > HISTORY_SIZE) {
+        history.shift();
+      }
+
+      // ためた値の中央値を、表示する周波数にする
+      frequency = calculateMedian(history);
+
+      // 【確認用】ためた値の中の最小値と最大値を求める
+      frequencyMin = Math.min(...history);
+      frequencyMax = Math.max(...history);
+    }
+
     // 次の描画のタイミングで、もう一度この関数を呼ぶ
     animationId = requestAnimationFrame(update);
   }
 
   /**
-   * 音の大きさ（RMS）を計算する関数
-   * RMS は「二乗平均平方根」のことで、波形の振れ幅の平均的な大きさを表す。
-   * @param {Float32Array} data - 波形データ（-1 〜 1 の値が並んだ配列）
-   * @returns {number} 音の大きさ（0 に近いほど静か）
+   * 中央値を計算する関数
+   * 中央値は、値を小さい順に並べたときに真ん中に来る値のこと。
+   * たまに大きく外れた値が混ざっても、平均と違って影響を受けにくい。
+   * @param {number[]} values - 数値の配列（1個以上入っていること）
+   * @returns {number} 中央値
    */
-  function calculateRms(data) {
-    // 各値を二乗したものの合計
-    let sumOfSquares = 0;
+  function calculateMedian(values) {
+    // 元の配列の順番を変えないように、コピーを作ってから小さい順に並べる
+    const sorted = [...values].sort((a, b) => a - b);
 
-    // 波形データを1つずつ取り出して、二乗して足していく
-    for (let i = 0; i < data.length; i++) {
-      sumOfSquares += data[i] * data[i];
+    // 真ん中の位置を求める
+    const middle = Math.floor(sorted.length / 2);
+
+    if (sorted.length % 2 === 1) {
+      // 個数が奇数のとき：真ん中の1個がそのまま中央値
+      return sorted[middle];
+    } else {
+      // 個数が偶数のとき：真ん中の2個の平均が中央値
+      return (sorted[middle - 1] + sorted[middle]) / 2;
     }
-
-    // 合計を個数で割って平均を出し、その平方根を返す
-    return Math.sqrt(sumOfSquares / data.length);
   }
 
   /**
@@ -169,7 +222,11 @@
     // 残りの部品と表示を初期状態に戻す
     analyser = null;
     waveform = null;
+    history = [];
     volume = 0;
+    frequency = null;
+    frequencyMin = null;
+    frequencyMax = null;
     isRunning = false;
   }
 
@@ -202,6 +259,23 @@
       <div class="volume-bar" style="width: {volume}%"></div>
     </div>
   </div>
+
+  <!-- 周波数の表示 -->
+  <p class="frequency">
+    <!-- 検出できているときは小数第1位まで表示し、できていないときは「---」を表示する -->
+    {#if frequency !== null}
+      {frequency.toFixed(1)} Hz
+    {:else}
+      --- Hz
+    {/if}
+  </p>
+
+  <!-- 【確認用】直近の検出値の最小値と最大値。精度の確認が終わったら消す -->
+  {#if frequencyMin !== null && frequencyMax !== null}
+    <p class="frequency-range">
+      （最小 {frequencyMin.toFixed(1)} ／ 最大 {frequencyMax.toFixed(1)}）
+    </p>
+  {/if}
 </main>
 
 <style>
@@ -273,5 +347,23 @@
   .volume-bar {
     height: 100%;
     background-color: #1976d2;
+  }
+
+  /* 周波数の表示：大きく中央に表示する */
+  .frequency {
+    margin: 32px 0 0 0;
+    font-size: 2.4rem;
+    text-align: center;
+    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 【確認用】最小値と最大値の表示：小さくグレーで表示する */
+  .frequency-range {
+    margin: 4px 0 0 0;
+    font-size: 0.9rem;
+    color: #757575;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
   }
 </style>
