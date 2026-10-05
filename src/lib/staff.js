@@ -40,11 +40,23 @@ export const CLEF_X = 8;
 // 1段に並べる音符の数
 export const NOTES_PER_ROW = 8;
 
-// 段の中で最初の音符の横の位置（玉の中心）
-const FIRST_NOTE_X = 80;
+// 調号の最初の記号の横の位置（ト音記号のすぐ右）
+const KEY_SIGNATURE_X = 40;
 
-// 音符と音符の横の間隔
-const NOTE_SPACING = 45;
+// 調号の記号と記号の横の間隔
+const KEY_SIGNATURE_SPACING = 10;
+
+// 調号の右端から、最初の音符（玉の中心）までの間隔
+const KEY_SIGNATURE_TO_NOTE_GAP = 30;
+
+// 段の中で最後（8番目）の音符の横の位置（玉の中心）
+const LAST_NOTE_X = 423;
+
+// 調号の♯を置く位置の通し番号（♯が付いていく順に、ファ5・ド5・ソ5・レ5・ラ4・ミ5・シ4）
+const SHARP_SIGNATURE_POSITIONS = [38, 35, 39, 36, 33, 37, 34];
+
+// 調号の♭を置く位置の通し番号（♭が付いていく順に、シ4・ミ5・ラ4・レ5・ソ4・ド5・ファ4）
+const FLAT_SIGNATURE_POSITIONS = [34, 37, 33, 36, 32, 35, 31];
 
 // 音符の玉の横幅（Bravura の玉は、線と線の間隔の1.18倍の幅で作られている）
 const NOTEHEAD_WIDTH = STAFF_SPACE * 1.18;
@@ -128,6 +140,55 @@ export function splitIntoRows(notes) {
 }
 
 /**
+ * 調号の記号を描くために必要な位置を計算する関数
+ * 調号の記号は、ト音記号の右に、決まった順番と高さで並べる。
+ * @param {number} signature - 調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
+ * @returns {Array<{glyph: string, x: number, y: number}>}
+ *   記号1つごとの、文字（glyph）と位置（x は左端、y は縦の位置）の配列。調号なしのときは空の配列
+ */
+export function layoutKeySignature(signature) {
+  // ♯の調か♭の調かで、使う記号と、置く位置の一覧を決める
+  const glyph = signature > 0 ? GLYPHS.sharp : GLYPHS.flat;
+  const positions = signature > 0 ? SHARP_SIGNATURE_POSITIONS : FLAT_SIGNATURE_POSITIONS;
+
+  // 記号の数（signature がマイナスのときも、プラスの個数に直す）
+  const count = Math.abs(signature);
+
+  // 記号を1つずつ、左から順に並べていく
+  const symbols = [];
+  for (let i = 0; i < count; i++) {
+    symbols.push({
+      glyph: glyph,
+      x: KEY_SIGNATURE_X + i * KEY_SIGNATURE_SPACING,
+      y: positionToY(positions[i]),
+    });
+  }
+
+  return symbols;
+}
+
+/**
+ * 段の中での音符の横の位置（玉の中心）を計算する関数
+ * 調号の記号が多いほど、最初の音符を右にずらす。
+ * 最後の音符の位置は変えないので、そのぶん音符どうしの間隔がせまくなる。
+ * @param {number} indexInRow - 段の中で何番目の音符か（0から始まる）
+ * @param {number} signature - 調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
+ * @returns {number} 玉の中心の横の位置
+ */
+function getNoteX(indexInRow, signature) {
+  // 調号の右端の位置
+  const signatureEndX = KEY_SIGNATURE_X + Math.abs(signature) * KEY_SIGNATURE_SPACING;
+
+  // 最初の音符の位置（調号の右端から、決まった間隔を空ける）
+  const firstNoteX = signatureEndX + KEY_SIGNATURE_TO_NOTE_GAP;
+
+  // 音符どうしの間隔（最初の音符から最後の音符までを、等間隔に分ける）
+  const noteSpacing = (LAST_NOTE_X - firstNoteX) / (NOTES_PER_ROW - 1);
+
+  return firstNoteX + indexInRow * noteSpacing;
+}
+
+/**
  * 加線を引く位置（通し番号）の一覧を求める関数
  * 加線は、五線からはみ出した音に付ける短い線のこと。
  * 五線の線と同じく、通し番号が偶数の位置に引く。
@@ -156,6 +217,7 @@ function getLedgerPositions(position) {
  * 玉・棒・加線・変化記号の位置を計算して、1つのオブジェクトにして返す。
  * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
  * @param {number} indexInRow - 段の中で何番目の音符か（0から始まる）
+ * @param {number} signature - 調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
  * @returns {{
  *   x: number, y: number,
  *   stemX: number, stemY1: number, stemY2: number,
@@ -163,13 +225,13 @@ function getLedgerPositions(position) {
  *   accidentalGlyph: string, accidentalX: number
  * }} 描画に使う位置の情報
  */
-export function layoutNote(note, indexInRow) {
+export function layoutNote(note, indexInRow, signature) {
   // ----- 玉の位置 -----
   // 通し番号を求める
   const position = getStaffPosition(note);
 
-  // 玉の中心の横の位置：段の中での順番に、間隔を掛けて求める
-  const x = FIRST_NOTE_X + indexInRow * NOTE_SPACING;
+  // 玉の中心の横の位置：段の中での順番と、調号の数から求める
+  const x = getNoteX(indexInRow, signature);
 
   // 玉の中心の縦の位置：通し番号から求める
   const y = positionToY(position);

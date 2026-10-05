@@ -2,13 +2,34 @@
   // 楽譜のデータに関する設定値と関数を読み込む
   import { STEP_NAMES, OCTAVES, isInRange, noteToText } from "#lib/score.js";
 
+  // 調のデータに関する設定値と関数を読み込む
+  import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames } from "#lib/key.js";
+
   // 五線譜を描く部品を読み込む
   import Staff from "#lib/Staff.svelte";
+
+  // ===== メニューに並べる調の一覧（長調と短調に分けておく） =====
+
+  // 長調だけを取り出した一覧
+  const majorKeys = KEYS.filter((key) => key.mode === "major");
+
+  // 短調だけを取り出した一覧
+  const minorKeys = KEYS.filter((key) => key.mode === "minor");
 
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
   // 登録した音の並び（音のデータの配列）。最初は空
   let notes = $state([]);
+
+  // 選択中の調の id（最初はハ長調）
+  let keyId = $state(DEFAULT_KEY_ID);
+
+  // 選択中の調のデータ
+  // $derived を付けると、keyId が変わるたびに自動で探し直される
+  let currentKey = $derived(getKey(keyId));
+
+  // 選択中の調の音階（文字の配列）。例：['ラ', 'シ', 'ド♯', 'レ', 'ミ', 'ファ♯', 'ソ♯', 'ラ']
+  let scaleNames = $derived(getScaleNames(currentKey));
 
   // 選択中のオクターブ（最初は4）
   let selectedOctave = $state(4);
@@ -84,8 +105,31 @@
 
   <h1>楽譜の編集</h1>
 
-  <!-- 五線譜（登録した音の並びを渡して、音符を表示する） -->
-  <Staff {notes} />
+  <!-- 調の選択 -->
+  <div class="key-area">
+    <label class="key-label" for="key-select">調</label>
+
+    <!-- bind:value を付けると、選んだ調の id が keyId に自動で入る -->
+    <select id="key-select" class="key-select" bind:value={keyId}>
+      <!-- optgroup は、メニューの中の見出し付きのグループ -->
+      <optgroup label="長調">
+        {#each majorKeys as key (key.id)}
+          <option value={key.id}>{getKeyLabel(key)}</option>
+        {/each}
+      </optgroup>
+      <optgroup label="短調">
+        {#each minorKeys as key (key.id)}
+          <option value={key.id}>{getKeyLabel(key)}</option>
+        {/each}
+      </optgroup>
+    </select>
+  </div>
+
+  <!-- 選択中の調の音階（どの音に♯・♭が付くかを確認するための表示） -->
+  <p class="scale">{scaleNames.join(" ")}</p>
+
+  <!-- 五線譜（登録した音の並びと、調号の数を渡して表示する） -->
+  <Staff {notes} signature={currentKey.signature} />
 
   <!-- 登録した音の一覧（確認用として、五線譜の下に文字でも表示する） -->
   <div class="note-list">
@@ -156,6 +200,37 @@
   h1 {
     font-size: 1.4rem;
     margin: 0 0 24px 0;
+  }
+
+  /* 調の選択のエリア：「調」の文字とメニューを横に並べる */
+  .key-area {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* 「調」の文字 */
+  .key-label {
+    font-size: 0.9rem;
+    color: #424242;
+    flex-shrink: 0;
+  }
+
+  /* 調を選ぶメニュー：残りの横幅いっぱいに広げ、指で押しやすい大きさにする */
+  .key-select {
+    flex-grow: 1;
+    padding: 10px 8px;
+    font-size: 1rem;
+    border: 1px solid #bdbdbd;
+    border-radius: 8px;
+    background-color: white;
+  }
+
+  /* 選択中の調の音階：小さくグレーで表示する */
+  .scale {
+    margin: 8px 0 0 0;
+    font-size: 0.9rem;
+    color: #616161;
   }
 
   /* 登録した音の一覧：枠で囲み、音を横に並べて端で折り返す */

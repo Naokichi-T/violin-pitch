@@ -1,14 +1,19 @@
 <script>
   // 五線譜の設定値と、位置を計算する関数を読み込む
-  import { STAFF_WIDTH, ROW_HEIGHT, LINE_POSITIONS, G_LINE_POSITION, CLEF_X, STEM_WIDTH, GLYPH_FONT_SIZE, GLYPHS, positionToY, splitIntoRows, layoutNote } from "#lib/staff.js";
+  import { STAFF_WIDTH, ROW_HEIGHT, LINE_POSITIONS, G_LINE_POSITION, CLEF_X, STEM_WIDTH, GLYPH_FONT_SIZE, GLYPHS, positionToY, splitIntoRows, layoutKeySignature, layoutNote } from "#lib/staff.js";
 
   // この部品を使う側から受け取る値
-  // notes：表示する音の並び（音のデータの配列）
-  let { notes } = $props();
+  // notes     ：表示する音の並び（音のデータの配列）
+  // signature ：調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
+  let { notes, signature } = $props();
 
   // 音の並びを、1段ぶん（8音）ずつに分けたもの
   // $derived を付けると、notes が変わるたびに自動で分け直される
   let rows = $derived(splitIntoRows(notes));
+
+  // 調号の記号それぞれの、文字と位置
+  // 調号はどの段でも同じなので、段ごとではなくここで1回だけ計算する
+  let keySignatureSymbols = $derived(layoutKeySignature(signature));
 </script>
 
 <!-- 段を1つずつ取り出して、段ごとに1つのSVGを描く -->
@@ -26,10 +31,18 @@
       {GLYPHS.gClef}
     </text>
 
+    <!-- 調号：ト音記号の右に、♯か♭を決まった順番と高さで並べる -->
+    {#each keySignatureSymbols as symbol, symbolIndex (symbolIndex)}
+      <text class="glyph" x={symbol.x} y={symbol.y} font-size={GLYPH_FONT_SIZE}>
+        {symbol.glyph}
+      </text>
+    {/each}
+
     <!-- 音符：段の中の音を1つずつ取り出して描く -->
     {#each row as note, indexInRow (indexInRow)}
       <!-- この音符の玉・棒・加線・変化記号の位置をまとめて計算する -->
-      {@const layout = layoutNote(note, indexInRow)}
+      <!-- 調号の数によって音符の横の位置が変わるので、signature も渡す -->
+      {@const layout = layoutNote(note, indexInRow, signature)}
 
       <!-- 加線：五線からはみ出した音にだけ、必要な本数ぶん引く -->
       {#each layout.ledgerYs as ledgerY (ledgerY)}
@@ -90,7 +103,7 @@
     stroke: #212121;
   }
 
-  /* 楽譜用フォントで表示する記号（ト音記号・玉・変化記号） */
+  /* 楽譜用フォントで表示する記号（ト音記号・調号・玉・変化記号） */
   .glyph {
     font-family: "Bravura";
     fill: #212121;
