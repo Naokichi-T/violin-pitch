@@ -49,19 +49,26 @@ export function isInRange(note) {
 }
 
 /**
+ * 変化記号の番号を、表示用の文字に変換する関数
+ * @param {number} accidental - 変化記号（1 が♯、-1 が♭、0 がなし）
+ * @returns {string} 表示用の文字（'♯'、'♭'、なしのときは空文字）
+ */
+export function accidentalToText(accidental) {
+  if (accidental === 1) {
+    return "♯";
+  } else if (accidental === -1) {
+    return "♭";
+  } else {
+    return "";
+  }
+}
+
+/**
  * 音のデータを、表示用の文字列に変換する関数
  * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
  * @returns {string} 表示用の文字列（例：'ラ4'、'ファ♯5'、'シ♭3'）
  */
 export function noteToText(note) {
-  // 変化記号を文字にする（♯・♭・なし）
-  let accidentalText = "";
-  if (note.accidental === 1) {
-    accidentalText = "♯";
-  } else if (note.accidental === -1) {
-    accidentalText = "♭";
-  }
-
   // 音名・変化記号・オクターブの順につなげる
-  return STEP_NAMES[note.step] + accidentalText + note.octave;
+  return STEP_NAMES[note.step] + accidentalToText(note.accidental) + note.octave;
 }

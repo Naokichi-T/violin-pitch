@@ -1,9 +1,9 @@
 <script>
   // 楽譜のデータに関する設定値と関数を読み込む
-  import { STEP_NAMES, OCTAVES, isInRange, noteToText } from "#lib/score.js";
+  import { STEP_NAMES, OCTAVES, isInRange, noteToText, accidentalToText } from "#lib/score.js";
 
   // 調のデータに関する設定値と関数を読み込む
-  import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames } from "#lib/key.js";
+  import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames, getSignatureAccidentals } from "#lib/key.js";
 
   // 五線譜を描く部品を読み込む
   import Staff from "#lib/Staff.svelte";
@@ -31,24 +31,56 @@
   // 選択中の調の音階（文字の配列）。例：['ラ', 'シ', 'ド♯', 'レ', 'ミ', 'ファ♯', 'ソ♯', 'ラ']
   let scaleNames = $derived(getScaleNames(currentKey));
 
+  // 選択中の調の調号で、7つの音名それぞれに付く変化記号（1 が♯、-1 が♭、0 がなし）
+  // 例：ニ長調のとき [1, 0, 0, 1, 0, 0, 0]（ドとファに♯）
+  let keyAccidentals = $derived(getSignatureAccidentals(currentKey.signature));
+
   // 選択中のオクターブ（最初は4）
   let selectedOctave = $state(4);
 
-  // 選択中の変化記号（1 が♯、-1 が♭、0 がなし）。最初はなし
-  let selectedAccidental = $state(0);
+  // 選択中の変化記号。次の4つのどれかが入る
+  //   null：選択なし（調号どおりの音になる）
+  //   1   ：♯
+  //   -1  ：♭
+  //   0   ：♮（調号を打ち消して、何も付かない音にする）
+  let selectedAccidental = $state(null);
 
   /**
    * 今選んでいるオクターブと変化記号で、音のデータを作る関数
-   * 実際に追加するときと、ボタンを押せるかどうかを調べるときの両方で使う。
+   * 実際に追加するとき、ボタンを押せるかどうかを調べるとき、ボタンの文字を作るときに使う。
+   * 変化記号を選んでいないときは、調号の変化記号を付ける。
    * @param {number} step - 音名の番号（0〜6。0 がド、6 がシ）
    * @returns {{step: number, accidental: number, octave: number}} 音のデータ
    */
   function createNote(step) {
+    // 変化記号を決める
+    let accidental;
+    if (selectedAccidental === null) {
+      // 選択なしのとき：調号でこの音名に付く変化記号を使う
+      accidental = keyAccidentals[step];
+    } else {
+      // ♯・♭・♮を選んでいるとき：調号より優先して、選んだものを使う
+      accidental = selectedAccidental;
+    }
+
     return {
       step: step,
-      accidental: selectedAccidental,
+      accidental: accidental,
       octave: selectedOctave,
     };
+  }
+
+  /**
+   * 音名ボタンに表示する文字を作る関数
+   * ボタンを押したときに実際に追加される音を、オクターブなしで表示する。
+   * 例：ニ長調で何も選んでいないとき、ファのボタンは「ファ♯」になる。
+   * @param {number} step - 音名の番号（0〜6。0 がド、6 がシ）
+   * @returns {string} ボタンに表示する文字（例：'ファ♯'、'シ♭'、'ソ'）
+   */
+  function getStepButtonText(step) {
+    // 今の選択で作られる音のデータから、音名と変化記号を文字にする
+    const note = createNote(step);
+    return STEP_NAMES[note.step] + accidentalToText(note.accidental);
   }
 
   /**
@@ -69,20 +101,20 @@
     // 並びの最後に追加する
     notes.push(note);
 
-    // 変化記号の選択を解除する（♯・♭は次の1音にだけ付けるため）
-    selectedAccidental = 0;
+    // 変化記号の選択を解除する（♯・♭・♮は次の1音にだけ付けるため）
+    selectedAccidental = null;
   }
 
   /**
    * 変化記号の選択を切り替える関数
-   * ♯ボタン・♭ボタンを押したときに呼ばれる。
+   * ♯ボタン・♭ボタン・♮ボタンを押したときに呼ばれる。
    * すでに選ばれているものをもう一度押すと、解除される。
-   * @param {number} value - 押したボタンの変化記号（1 が♯、-1 が♭）
+   * @param {number} value - 押したボタンの変化記号（1 が♯、-1 が♭、0 が♮）
    */
   function toggleAccidental(value) {
     if (selectedAccidental === value) {
       // 同じものをもう一度押したとき：解除する
-      selectedAccidental = 0;
+      selectedAccidental = null;
     } else {
       // 選ばれていないものを押したとき：それを選ぶ
       selectedAccidental = value;
@@ -132,6 +164,7 @@
   <Staff {notes} signature={currentKey.signature} />
 
   <!-- 登録した音の一覧（確認用として、五線譜の下に文字でも表示する） -->
+  <!-- こちらは調号に関係なく、実際に鳴る音をそのまま表示する -->
   <div class="note-list">
     {#if notes.length === 0}
       <span class="empty">まだ音がありません</span>
@@ -158,10 +191,12 @@
   </div>
 
   <!-- 変化記号の選択（押すと次の1音にだけ付く。もう一度押すと解除） -->
-  <p class="label">変化記号（次の1音にだけ付きます）</p>
+  <!-- 何も選んでいないときは、調号どおりの音になる -->
+  <p class="label">変化記号（次の1音だけ。選ばなければ調号どおり）</p>
   <div class="button-row">
     <button class="choice" class:selected={selectedAccidental === 1} onclick={() => toggleAccidental(1)}> ♯ </button>
     <button class="choice" class:selected={selectedAccidental === -1} onclick={() => toggleAccidental(-1)}> ♭ </button>
+    <button class="choice" class:selected={selectedAccidental === 0} onclick={() => toggleAccidental(0)}> ♮ </button>
   </div>
 
   <!-- 音名ボタン（押すと音が追加される） -->
@@ -169,8 +204,9 @@
   <div class="step-row">
     {#each STEP_NAMES as stepName, step (step)}
       <!-- 今の選択で音域の外になる音は、ボタンを押せなくする -->
+      <!-- ボタンの文字は、押したときに実際に追加される音にする（例：ニ長調のファは「ファ♯」） -->
       <button class="step" disabled={!isInRange(createNote(step))} onclick={() => addNote(step)}>
-        {stepName}
+        {getStepButtonText(step)}
       </button>
     {/each}
   </div>
@@ -318,8 +354,10 @@
     color: white;
     background-color: #2e7d32;
     border: none;
-    /* 「ファ」が2文字なので、狭い画面でも収まるように少し小さくする */
-    font-size: 1rem;
+    /* 「ファ♯」が3文字になるので、狭い画面でも1行に収まるように小さめにする */
+    font-size: 0.9rem;
+    /* 文字が2行に折り返されないようにする */
+    white-space: nowrap;
   }
 
   /* 「1つ消す」ボタン：赤。横幅いっぱいに表示する */

@@ -58,7 +58,7 @@
         {GLYPHS.notehead}
       </text>
 
-      <!-- 変化記号：♯か♭が付いている音にだけ、玉の左に表示する -->
+      <!-- 変化記号：調号と違う音にだけ、♯・♭・♮を玉の左に表示する -->
       <!-- text-anchor="end" を付けると、x の位置が文字の右端になる -->
       {#if layout.accidentalGlyph !== ""}
         <text class="glyph" x={layout.accidentalX} y={layout.y} font-size={GLYPH_FONT_SIZE} text-anchor="end">

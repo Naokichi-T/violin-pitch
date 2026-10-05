@@ -1,3 +1,6 @@
+// 調号から、各音名に付く変化記号を求める関数を読み込む
+import { getSignatureAccidentals } from "./key.js";
+
 // ===== 五線譜を描くための設定値 =====
 // 単位はすべて、SVGの中での長さ（画面の幅に合わせて全体が拡大・縮小される）
 
@@ -88,6 +91,7 @@ export const GLYPHS = {
   notehead: "\uE0A4", // 音符の玉（黒く塗りつぶしたもの）
   sharp: "\uE262", // ♯
   flat: "\uE260", // ♭
+  natural: "\uE261", // ♮（ナチュラル）
 };
 
 /**
@@ -271,12 +275,23 @@ export function layoutNote(note, indexInRow, signature) {
   const ledgerX2 = x + NOTEHEAD_WIDTH / 2 + LEDGER_EXTENSION;
 
   // ----- 変化記号 -----
-  // 表示する記号の文字（変化記号がないときは空文字）
+  // この調の調号で、この音名にもともと付いている変化記号（1 が♯、-1 が♭、0 がなし）
+  const signatureAccidental = getSignatureAccidentals(signature)[note.step];
+
+  // 表示する記号の文字（記号を表示しないときは空文字）
+  // 調号と同じ音には記号を付けず、調号と違う音にだけ記号を付ける
   let accidentalGlyph = "";
-  if (note.accidental === 1) {
-    accidentalGlyph = GLYPHS.sharp;
-  } else if (note.accidental === -1) {
-    accidentalGlyph = GLYPHS.flat;
+  if (note.accidental !== signatureAccidental) {
+    if (note.accidental === 1) {
+      // ♯の音
+      accidentalGlyph = GLYPHS.sharp;
+    } else if (note.accidental === -1) {
+      // ♭の音
+      accidentalGlyph = GLYPHS.flat;
+    } else {
+      // 調号では♯か♭が付く音名なのに、何も付かない音：♮で調号を打ち消す
+      accidentalGlyph = GLYPHS.natural;
+    }
   }
 
   // 変化記号の右端の位置（玉の左端から、すき間ぶん左）
