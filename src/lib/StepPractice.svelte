@@ -56,6 +56,11 @@
   // 前の音の響きを拾って、次の音の判定を始めてしまうのを防ぐため
   const WAIT_AFTER_ADVANCE_MILLISECONDS = 300;
 
+  // 合図の音を鳴らしたときに、判定を待つ時間（ミリ秒）
+  // 合図の音をマイクが拾うと、検出する高さが一瞬乱れる。
+  // それを「音が途切れた」と勘違いしないように、合図を鳴らさないときより長く待つ
+  const WAIT_AFTER_CHIME_MILLISECONDS = 600;
+
   // 2つの音が「同じ高さ」かどうかを見分けるための幅（セント）
   // 次の音が同じ高さのときは、いったん音が途切れるまで判定を待つ
   const SAME_PITCH_CENTS = 30;
@@ -378,7 +383,9 @@
     targetIndex = targetIndex + 1;
 
     // 前の音の響きを拾わないように、少しの間、判定を待つ
-    waitUntil = performance.now() + WAIT_AFTER_ADVANCE_MILLISECONDS;
+    // 合図の音を鳴らしたときは、その音でマイクの検出が乱れるので、長めに待つ
+    const waitMilliseconds = chimeEnabled ? WAIT_AFTER_CHIME_MILLISECONDS : WAIT_AFTER_ADVANCE_MILLISECONDS;
+    waitUntil = performance.now() + waitMilliseconds;
 
     // 次の音が前の音とほぼ同じ高さのときは、いったん音が途切れるまで判定を待つ
     // （前の音を弾き続けているだけで、次の音も通過してしまうのを防ぐため）
