@@ -87,9 +87,10 @@
   }
 
   /**
-   * 音を追加する関数
+   * 音を追加する、または選んだ音を置き換える関数
    * 音名ボタンを押したときに呼ばれる。
-   * 今選んでいるオクターブと変化記号で音を作り、並びの最後に追加する。
+   * 今選んでいるオクターブと変化記号で音を作る。
+   * 音を選んでいないときは並びの最後に追加し、選んでいるときはその音と入れ替える。
    * @param {number} step - 音名の番号（0〜6。0 がド、6 がシ）
    */
   function addNote(step) {
@@ -101,8 +102,14 @@
       return;
     }
 
-    // 並びの最後に追加する
-    notes.push(note);
+    if (selectedIndex === null) {
+      // 音を選んでいないとき：並びの最後に追加する
+      notes.push(note);
+    } else {
+      // 音を選んでいるとき：選んだ位置の音を、新しい音に入れ替える
+      // 押し間違えたときにすぐ押し直せるように、選択はそのまま残す
+      notes[selectedIndex] = note;
+    }
 
     // 変化記号の選択を解除する（♯・♭・♮は次の1音にだけ付けるため）
     selectedAccidental = null;
@@ -137,20 +144,28 @@
     } else {
       // 別の音をタップしたとき：その音を選ぶ
       selectedIndex = index;
+
+      // オクターブのボタンを、選んだ音のオクターブに合わせる
+      // （同じオクターブの中で直すことが多いので、選び直す手間を減らすため）
+      selectedOctave = notes[index].octave;
     }
   }
 
   /**
-   * 最後の1音を消す関数
-   * 「1つ消す」ボタンを押したときに呼ばれる。
+   * 音を消す関数
+   * 消すボタンを押したときに呼ばれる。
+   * 音を選んでいないときは最後の1音を消し、選んでいるときはその音を消す。
    */
-  function removeLastNote() {
-    // 並びの最後の1つを取り除く
-    notes.pop();
+  function removeNote() {
+    if (selectedIndex === null) {
+      // 音を選んでいないとき：並びの最後の1つを取り除く
+      notes.pop();
+    } else {
+      // 音を選んでいるとき：選んだ位置から1つ取り除く（後ろの音は自動で前に詰まる）
+      // splice(位置, 個数) は、配列の途中から指定した個数を取り除く命令
+      notes.splice(selectedIndex, 1);
 
-    // 消した音を選んでいた場合は、選択を解除する
-    // （なくなった音を選んだままにしないため）
-    if (selectedIndex !== null && selectedIndex >= notes.length) {
+      // 選択を解除する（続けて押したときに、次の音まで消してしまわないようにするため）
       selectedIndex = null;
     }
   }
@@ -228,8 +243,16 @@
     <button class="choice" class:selected={selectedAccidental === 0} onclick={() => toggleAccidental(0)}> ♮ </button>
   </div>
 
-  <!-- 音名ボタン（押すと音が追加される） -->
-  <p class="label">音名</p>
+  <!-- 音名ボタン（押すと、音が追加されるか、選んだ音が置き換わる） -->
+  <!-- 見出しで、今どちらの動きになるのかを案内する -->
+  <p class="label">
+    {#if selectedIndex === null}
+      音名（最後に追加します）
+    {:else}
+      <!-- 置き換えになることに気づきやすいように、案内の部分だけ赤字にする -->
+      音名<span class="replace-hint">（{selectedIndex + 1}番目の「{noteToText(notes[selectedIndex])}」を置き換えます）</span>
+    {/if}
+  </p>
   <div class="step-row">
     {#each STEP_NAMES as stepName, step (step)}
       <!-- 今の選択で音域の外になる音は、ボタンを押せなくする -->
@@ -240,8 +263,15 @@
     {/each}
   </div>
 
-  <!-- 最後の1音を消すボタン（音が1つもないときは押せない） -->
-  <button class="remove" disabled={notes.length === 0} onclick={removeLastNote}>1つ消す</button>
+  <!-- 消すボタン（音が1つもないときは押せない） -->
+  <!-- 音を選んでいるかどうかで、ボタンの文字を切り替える -->
+  <button class="remove" disabled={notes.length === 0} onclick={removeNote}>
+    {#if selectedIndex === null}
+      最後の1音を消す
+    {:else}
+      選んだ音を消す
+    {/if}
+  </button>
 </main>
 
 <style>
@@ -345,6 +375,12 @@
     margin: 20px 0 8px 0;
     font-size: 0.9rem;
     color: #424242;
+  }
+
+  /* 「〇番目の音を置き換えます」の案内：赤い太字にして目立たせる */
+  .replace-hint {
+    color: #c62828;
+    font-weight: bold;
   }
 
   /* オクターブと変化記号のボタンを横に並べる */
