@@ -24,6 +24,12 @@
   // 五線譜を描く部品を読み込む（区間を選ぶときに、楽譜の全体を表示するために使う）
   import Staff from "#lib/Staff.svelte";
 
+  // 保存した楽譜を探す関数、保存していない変更があるかを調べる関数、最高点を記録する関数を読み込む
+  import { getSavedScore, hasUnsavedChanges, recordBestScore } from "#lib/library.js";
+
+  // 楽譜の名前と最高点を表示する部品を読み込む
+  import ScoreTitle from "#lib/ScoreTitle.svelte";
+
   // ===== 練習のモードに関する設定値 =====
 
   // 選べる練習のモードの一覧
@@ -115,6 +121,59 @@
   // 設定が画面に出ていて（純正律で）、チェックが入っているときだけ true になる
   let allowOpenString = $derived(showsOpenStringSetting && openStringEnabled);
 
+  // ===== 楽譜の名前と最高点 =====
+
+  // 練習する楽譜が、保存した楽譜のどれか（その id）。名前を付けて保存していない楽譜のときは null
+  let savedId = $state(null);
+
+  // 練習する楽譜の名前。名前を付けて保存していない楽譜のときは空の文字
+  let scoreName = $state("");
+
+  // この楽譜の最高点。まだ無いときは null
+  let bestScore = $state(null);
+
+  // 作業中の楽譜に、保存していない変更があるかどうか（true：ある）
+  // あるときは、保存してある楽譜と中身が違うので、最高点を記録しない
+  let isUnsaved = $state(false);
+
+  // 最高点を更新した直後かどうか（true：更新した直後）。「更新しました！」と表示するために使う
+  let isNewRecord = $state(false);
+
+  // 最高点を記録できない理由（記録できるときは空の文字）
+  // $derived.by を付けると、isUnsaved か rangeStart が変わるたびに、自動で決め直される
+  let recordNote = $derived.by(() => {
+    if (isUnsaved) {
+      return "保存していない変更があるので、記録されません";
+    }
+    if (rangeStart !== null) {
+      return "区間を指定しているときは、記録されません";
+    }
+    return "";
+  });
+
+  /**
+   * 「通し」で最後まで弾けたときに、最高点を記録する関数
+   * 「通し」の部品から、その回の点数と一緒に呼ばれる。
+   * 保存した楽譜を、変更なしの状態で、全体を弾いたときだけ記録する。
+   * @param {number} points - その回の点数（0〜100）
+   */
+  function handleRunFinish(points) {
+    // 保存した楽譜でないとき・記録できない理由があるときは、何もしない
+    if (savedId === null || recordNote !== "") {
+      return;
+    }
+
+    // 最高点と比べて、上回っていたら記録する（楽譜が見つからないときなどは null が返る）
+    const result = recordBestScore(savedId, points);
+    if (result === null) {
+      return;
+    }
+
+    // 画面の最高点と、「更新した直後かどうか」を入れ直す
+    bestScore = result.bestScore;
+    isNewRecord = result.isNewRecord;
+  }
+
   // このページが画面に表示された直後に、保存された音律・判定のレベル・楽譜をブラウザから読み込む
   // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
   onMount(() => {
@@ -134,6 +193,28 @@
 
       // 音の並び
       notes = savedScore.notes;
+
+      // 保存した楽譜のどれを開いているかと、その名前
+      savedId = savedScore.savedId;
+      scoreName = savedScore.name;
+
+      // 保存した楽譜を開いているときは、その最高点と、保存していない変更があるかどうかを調べる
+      if (savedId !== null) {
+        const libraryScore = getSavedScore(savedId);
+
+        // 最高点（まだ無いとき・楽譜が見つからないときは null のまま）
+        if (libraryScore !== null && typeof libraryScore.bestScore === "number") {
+          bestScore = libraryScore.bestScore;
+        }
+
+        isUnsaved = hasUnsavedChanges({
+          savedId: savedId,
+          keyId: savedScore.keyId,
+          tempo: savedScore.tempo,
+          temperamentId: temperamentId,
+          notes: savedScore.notes,
+        });
+      }
     }
 
     // 読み込みが終わった
@@ -259,6 +340,11 @@
     <!-- 楽譜の調と音律（編集ページで決めたものを表示するだけで、ここでは変えられない） -->
     <p class="score-info">{getKeyLabel(currentKey)}・{currentTemperament.name}</p>
 
+    <!-- 楽譜の名前と最高点：保存した楽譜を開いているときだけ表示する -->
+    {#if savedId !== null}
+      <ScoreTitle name={scoreName} {bestScore} {isNewRecord} {recordNote} />
+    {/if}
+
     <!-- 練習する区間：今の区間の説明と、「変更」「全体に戻す」のボタンを横に並べる -->
     <div class="range-row">
       <span class="range-caption">区間</span>
@@ -364,7 +450,17 @@
           <!-- 「通し」モード：練習する音・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうか・くり返すかどうかを渡す -->
           <!-- ontempochange：「通し」の中でテンポを変えたら、このページの tempo も同じ値にする -->
           <!-- （区間やモードを変えて部品を作り直しても、変えたテンポのまま始められるようにするため） -->
-          <RunPractice notes={practiceNotes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} {allowOpenString} {repeatEnabled} ontempochange={(value) => (tempo = value)} />
+          <RunPractice
+            notes={practiceNotes}
+            {currentKey}
+            initialTempo={tempo}
+            {temperamentId}
+            {tolerance}
+            {allowOpenString}
+            {repeatEnabled}
+            ontempochange={(value) => (tempo = value)}
+            onfinish={handleRunFinish}
+          />
         {/if}
       {/key}
     {/if}

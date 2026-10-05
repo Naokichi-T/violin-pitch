@@ -43,8 +43,10 @@
   // repeatEnabled  ：最後の音まで進んだら、最初の音に戻ってくり返すかどうか（true：くり返す）
   // ontempochange  ：テンポを変えたときに呼ぶ関数。新しいテンポを渡す
   //                  （練習ページがテンポを覚えておき、この部品を作り直したときに同じテンポで始めるため）
-  // ontempochange は、渡されなかったときのための初期値（何もしない関数）を決めておく
-  let { notes, currentKey, initialTempo, temperamentId, tolerance, allowOpenString, repeatEnabled, ontempochange = () => {} } = $props();
+  // onfinish       ：最後の音まで進んで、点数が出たときに呼ぶ関数。その回の点数を渡す
+  //                  （練習ページが、楽譜ごとの最高点を記録するため）
+  // ontempochange と onfinish は、渡されなかったときのための初期値（何もしない関数）を決めておく
+  let { notes, currentKey, initialTempo, temperamentId, tolerance, allowOpenString, repeatEnabled, ontempochange = () => {}, onfinish = () => {} } = $props();
 
   // ===== テンポとカウントに関する設定値 =====
 
@@ -332,6 +334,9 @@
 
       // 終わりの合図の音を鳴らす（判定はもう終わっているので、点数には影響しない）
       playChime(FINISH_CHIME_FREQUENCIES);
+
+      // この回の点数を、練習ページに伝える（楽譜ごとの最高点を記録するため）
+      onfinish(totalScore);
 
       // くり返しているとき（または、途中でくり返しをやめたとき）は、この回の点数を記録する
       if (repeatEnabled || roundScores.length > 0) {

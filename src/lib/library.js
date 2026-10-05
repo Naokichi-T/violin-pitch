@@ -122,6 +122,14 @@ export function updateSavedScore(id, data) {
     return null;
   }
 
+  // 調か音の並びが変わるときは、最高点を消す（別の内容になるので、前の点数とは比べられないため）
+  // テンポや音律だけが変わるときは、最高点を残す
+  const isSameMusic = score.keyId === data.keyId && JSON.stringify(score.notes) === JSON.stringify(data.notes);
+  if (!isSameMusic) {
+    // delete は、データの中から、その項目そのものを取り除く命令
+    delete score.bestScore;
+  }
+
   // 内容を入れ替える（id と名前はそのまま）
   score.keyId = data.keyId;
   score.tempo = data.tempo;
@@ -197,4 +205,49 @@ export function hasUnsavedChanges(current) {
 
   // 保存してある内容と、文字にして比べる
   return toComparableText(current) !== toComparableText(saved);
+}
+
+/**
+ * 保存した楽譜を、id で1つ探す関数
+ * @param {string} id - 探す楽譜の id
+ * @returns {object|null} 見つかった楽譜。見つからないときは null
+ */
+export function getSavedScore(id) {
+  const score = loadSavedScores().find((item) => item.id === id);
+
+  // find は、見つからないとき undefined を返すので、null に直して返す
+  return score === undefined ? null : score;
+}
+
+/**
+ * 「通し」の点数を、その楽譜の最高点と比べて、上回っていたら記録する関数
+ * 最高点は、保存した楽譜の中に bestScore という名前で入れておく（まだ無いときは、項目そのものが無い）。
+ * @param {string} id - 楽譜の id
+ * @param {number} points - 今回の点数（0〜100）
+ * @returns {{bestScore: number, isNewRecord: boolean}|null}
+ *   bestScore：記録した後の最高点、isNewRecord：今回の点数で最高点を更新したかどうか。
+ *   その id の楽譜がないときや、書き込めなかったときは null
+ */
+export function recordBestScore(id, points) {
+  // 今の一覧を読み込んで、楽譜を探す
+  const scores = loadSavedScores();
+  const score = scores.find((item) => item.id === id);
+  if (score === undefined) {
+    return null;
+  }
+
+  // これまでの最高点（まだ無いときは null）
+  const previousBest = typeof score.bestScore === "number" ? score.bestScore : null;
+
+  // 最高点がまだ無いとき、または、今回の点数のほうが高いときは、更新する
+  if (previousBest === null || points > previousBest) {
+    score.bestScore = points;
+    if (!writeSavedScores(scores)) {
+      return null;
+    }
+    return { bestScore: points, isNewRecord: true };
+  }
+
+  // 更新しなかったとき：これまでの最高点をそのまま返す
+  return { bestScore: previousBest, isNewRecord: false };
 }

@@ -235,6 +235,11 @@
 
             <!-- 音の数・テンポ・保存した日時 -->
             <p class="score-detail">{score.notes.length}音・♩＝{score.tempo}・{formatDate(score.savedAt)}</p>
+
+            <!-- 「通し」の最高点：記録があるときだけ表示する -->
+            {#if typeof score.bestScore === "number"}
+              <p class="score-detail best">最高点 {score.bestScore}点</p>
+            {/if}
           </div>
 
           <!-- 開く・削除のボタンを縦に並べる -->
@@ -381,6 +386,11 @@
     color: #616161;
     /* 数字の幅をそろえる */
     font-variant-numeric: tabular-nums;
+  }
+
+  /* 最高点：緑の字にする */
+  .score-detail.best {
+    color: #2e7d32;
   }
 
   /* 開く・削除のボタンを縦に並べる */
