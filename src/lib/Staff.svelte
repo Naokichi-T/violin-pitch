@@ -21,9 +21,10 @@
   // signature     ：調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
   // selectedIndex ：選択中の音が何番目か（0から始まる）。選択していないときは null
   // playingIndex  ：再生中の音が何番目か（0から始まる）。再生していないときは null
+  // passed        ：それぞれの音を通過したかどうか（notes と同じ順番で、true か false が並ぶ配列）
   // onselect      ：音符がタップされたときに呼ぶ関数。何番目の音かを渡す
-  // selectedIndex・playingIndex・onselect は、渡されなかったときのための初期値を決めておく
-  let { notes, signature, selectedIndex = null, playingIndex = null, onselect = () => {} } = $props();
+  // selectedIndex・playingIndex・passed・onselect は、渡されなかったときのための初期値を決めておく
+  let { notes, signature, selectedIndex = null, playingIndex = null, passed = [], onselect = () => {} } = $props();
 
   // 音の並びを、1段ぶん（8音）ずつに分けたもの
   // $derived を付けると、notes が変わるたびに自動で分け直される
@@ -88,6 +89,7 @@
         class="note"
         class:selected={noteIndex === selectedIndex}
         class:playing={noteIndex === playingIndex}
+        class:passed={passed[noteIndex] === true}
         role="button"
         tabindex="0"
         aria-label="{noteIndex + 1}番目の音"
@@ -184,9 +186,24 @@
     fill: transparent;
   }
 
-  /* 選択中の音符：帯を薄い青にする */
+  /* 通過した音符：玉と変化記号を緑にする */
+  /* 選択中・再生中のスタイルより前に書いているので、重なったときは選択中・再生中の色が優先される */
+  .note.passed .glyph {
+    fill: #2e7d32;
+  }
+
+  /* 通過した音符：棒と加線を緑にする */
+  .note.passed .stem,
+  .note.passed .ledger-line {
+    stroke: #2e7d32;
+  }
+
+  /* 選択中の音符：帯を、透ける青にする */
+  /* 帯は五線の線の上に重なるので、透けない色で塗ると線が隠れてしまう。 */
+  /* fill-opacity で透け具合を決める（0 は完全に透明、1 はまったく透けない） */
   .note.selected .hit-area {
-    fill: #bbdefb;
+    fill: #1976d2;
+    fill-opacity: 0.25;
   }
 
   /* 選択中の音符：玉と変化記号を青にする */
@@ -200,10 +217,11 @@
     stroke: #0d47a1;
   }
 
-  /* 再生中の音符：帯を薄いオレンジにする */
+  /* 再生中の音符：帯を、透けるオレンジにする */
   /* 選択中のスタイルより後に書いているので、選択中の音が再生されたときはオレンジが優先される */
   .note.playing .hit-area {
-    fill: #ffe0b2;
+    fill: #fb8c00;
+    fill-opacity: 0.3;
   }
 
   /* 再生中の音符：玉と変化記号をオレンジにする */

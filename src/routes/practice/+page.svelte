@@ -40,6 +40,21 @@
   // メーターに表示する範囲（セント）。ズレがこれを超えたら「もっと高い」「もっと低い」と表示する
   const METER_RANGE = 50;
 
+  // OK を何ミリ秒保てたら、次の音へ進むか（500ミリ秒 ＝ 0.5秒）
+  const HOLD_MILLISECONDS = 500;
+
+  // OK から外れても、この時間（ミリ秒）以内に OK に戻れば、保てていることにする
+  // 弓を返すときなどの、ごく短い途切れでやり直しにならないようにするため
+  const GRACE_MILLISECONDS = 150;
+
+  // 次の音へ進んだ直後に、判定を待つ時間（ミリ秒）
+  // 前の音の響きを拾って、次の音の判定を始めてしまうのを防ぐため
+  const WAIT_AFTER_ADVANCE_MILLISECONDS = 300;
+
+  // 2つの音が「同じ高さ」かどうかを見分けるための幅（セント）
+  // 次の音が同じ高さのときは、いったん音が途切れるまで判定を待つ
+  const SAME_PITCH_CENTS = 30;
+
   // お手本の音を鳴らす長さ（秒）
   const LISTEN_SECONDS = 1;
 
@@ -81,11 +96,35 @@
   // エラーメッセージ（エラーがないときは空文字）
   let errorMessage = $state("");
 
+  // OK をどのくらい保てているか（0〜1）。0 は保てていない、1 は必要な時間を保てた
+  // ゲージの長さに使う
+  let holdProgress = $state(0);
+
+  // それぞれの音を通過したかどうか（notes と同じ順番で、true か false が並ぶ配列）
+  // 例：[true, true, false, false] は、1番目と2番目を通過した状態
+  let passed = $state([]);
+
+  // 最後の音まで通過したかどうか（true：最後まで弾けた、false：まだ途中）
+  let isFinished = $state(false);
+
   // ===== 判定のために覚えておく値（画面には表示しないので $state は付けない） =====
 
   // この時刻（ページを開いてからのミリ秒）までは、判定を止めておく
   // お手本の音を鳴らしている間、その音をマイクが拾ってしまうため
   let muteUntil = 0;
+
+  // OK になりはじめた時刻（ミリ秒）。OK を保てていないときは null
+  let holdStartTime = null;
+
+  // 最後に OK だった時刻（ミリ秒）。短い途切れを見逃すために使う
+  let lastOkTime = 0;
+
+  // この時刻（ミリ秒）までは、次の音の判定を始めない（次の音へ進んだ直後の待ち時間）
+  let waitUntil = 0;
+
+  // 音がいったん途切れるのを待っているかどうか
+  // 同じ高さの音が続くときに、前の音を弾き続けているだけで通過してしまうのを防ぐ
+  let needRelease = false;
 
   // 今の目標の音のデータ（音が1つもないときは null）
   let targetNote = $derived(notes.length > 0 ? notes[targetIndex] : null);
@@ -106,6 +145,9 @@
 
       // 音の並び
       notes = savedScore.notes;
+
+      // 「通過したかどうか」を、音の数だけ用意する（最初は、どの音も通過していない）
+      passed = notes.map(() => false);
     }
 
     // 読み込みが終わった
@@ -172,16 +214,8 @@
     errorMessage = "";
 
     try {
-      // マイクを開始する。音の高さが分かるたびに、渡した関数が呼ばれる
-      await startMicrophone((frequency) => {
-        if (performance.now() < muteUntil) {
-          // お手本の音を鳴らしている間は、音が出ていないことにする
-          detectedFrequency = null;
-        } else {
-          // 検出した周波数を入れる（音が出ていないときは null が渡される）
-          detectedFrequency = frequency;
-        }
-      });
+      // マイクを開始する。音の高さが分かるたびに、handlePitch が呼ばれる
+      await startMicrophone(handlePitch);
 
       // 聴いている状態にする
       isListening = true;
@@ -190,6 +224,125 @@
       // どんなエラーかは、microphone.js が日本語のメッセージにしてくれている
       errorMessage = error.message;
     }
+  }
+
+  /**
+   * マイクで音の高さが分かるたびに呼ばれる関数（1秒に約60回）
+   * 検出した音を画面に反映し、OK を保てている時間を数えて、十分に保てたら次の音へ進む。
+   * @param {number|null} frequency - 検出した周波数（Hz）。音が出ていないときは null
+   */
+  function handlePitch(frequency) {
+    // 今の時刻（ページを開いてからのミリ秒）
+    const now = performance.now();
+
+    // お手本の音を鳴らしている間は、音が出ていないことにして、何も数えない
+    if (now < muteUntil) {
+      detectedFrequency = null;
+      resetHold();
+      return;
+    }
+
+    // 検出した周波数を入れる（これで、ズレと判定の結果も自動で計算し直される）
+    detectedFrequency = frequency;
+
+    // 最後まで弾けたあとは、メーターを動かすだけで、通過の判定はしない
+    if (isFinished) {
+      return;
+    }
+
+    // 次の音へ進んだ直後の待ち時間の間は、何も数えない
+    if (now < waitUntil) {
+      resetHold();
+      return;
+    }
+
+    // 音が途切れるのを待っているとき
+    if (needRelease) {
+      if (judgement === "ok") {
+        // まだ前の音が鳴りつづけているので、何も数えない
+        resetHold();
+        return;
+      }
+
+      // 音が途切れた（または別の高さになった）ので、ここから先はふつうに判定する
+      needRelease = false;
+    }
+
+    if (judgement === "ok") {
+      // OK のとき：OK になりはじめた時刻を覚える（すでに覚えていれば、そのまま）
+      if (holdStartTime === null) {
+        holdStartTime = now;
+      }
+
+      // 最後に OK だった時刻を更新する
+      lastOkTime = now;
+
+      // OK を保てている時間を、必要な時間で割って、0〜1 の割合にする
+      holdProgress = Math.min(1, (now - holdStartTime) / HOLD_MILLISECONDS);
+
+      // 必要な時間を保てたら、この音を通過して次へ進む
+      if (holdProgress >= 1) {
+        passTarget();
+      }
+    } else if (holdStartTime !== null && now - lastOkTime > GRACE_MILLISECONDS) {
+      // OK から外れて、見逃す時間も過ぎたとき：最初から数え直す
+      resetHold();
+    }
+  }
+
+  /**
+   * OK を保てている時間の記録を、最初に戻す関数
+   */
+  function resetHold() {
+    holdStartTime = null;
+    holdProgress = 0;
+  }
+
+  /**
+   * 今の目標の音を通過して、次の音へ進む関数
+   * OK を必要な時間だけ保てたときに呼ばれる。
+   */
+  function passTarget() {
+    // 今の音に、通過した印を付ける（五線譜の音符が緑になる）
+    passed[targetIndex] = true;
+
+    // 数えていた時間を最初に戻す
+    resetHold();
+
+    // 最後の音だったときは、ここで終わる
+    if (targetIndex === notes.length - 1) {
+      isFinished = true;
+      return;
+    }
+
+    // 通過した音の周波数を覚えておく（次の音と同じ高さかどうかを調べるため）
+    const previousFrequency = targetFrequency;
+
+    // 次の音を目標にする（これで、目標の音の周波数も自動で計算し直される）
+    targetIndex = targetIndex + 1;
+
+    // 前の音の響きを拾わないように、少しの間、判定を待つ
+    waitUntil = performance.now() + WAIT_AFTER_ADVANCE_MILLISECONDS;
+
+    // 次の音が前の音とほぼ同じ高さのときは、いったん音が途切れるまで判定を待つ
+    // （前の音を弾き続けているだけで、次の音も通過してしまうのを防ぐため）
+    const centsBetween = 1200 * Math.log2(targetFrequency / previousFrequency);
+    needRelease = Math.abs(centsBetween) < SAME_PITCH_CENTS;
+  }
+
+  /**
+   * 最初の音からやり直す関数
+   * 「最初からもう一度」ボタンを押したときに呼ばれる。
+   */
+  function restart() {
+    // どの音も通過していない状態に戻す
+    passed = notes.map(() => false);
+    isFinished = false;
+
+    // 最初の音を目標にする
+    targetIndex = 0;
+    needRelease = false;
+    resetHold();
   }
 
   /**
@@ -202,6 +355,9 @@
     // 止まっている状態に戻し、検出した音も消す
     isListening = false;
     detectedFrequency = null;
+
+    // 数えていた時間も最初に戻す
+    resetHold();
   }
 
   /**
@@ -216,6 +372,13 @@
     }
 
     targetIndex = index;
+
+    // 目標を手動で動かしたので、数えていた時間を最初に戻す
+    resetHold();
+    needRelease = false;
+
+    // 最後まで弾けたあとに動かした場合は、また通過の判定をするようにする
+    isFinished = false;
   }
 
   /**
@@ -257,8 +420,9 @@
     <p class="score-info">{getKeyLabel(currentKey)}・{currentTemperament.name}</p>
 
     <!-- 五線譜（目標の音を、編集ページの「選択中」と同じ青で表示する） -->
+    <!-- passed を渡して、通過した音符を緑で表示する -->
     <!-- 音符をタップすると、その音を目標にする -->
-    <Staff {notes} signature={currentKey.signature} selectedIndex={targetIndex} onselect={setTarget} />
+    <Staff {notes} signature={currentKey.signature} selectedIndex={targetIndex} {passed} onselect={setTarget} />
 
     <!-- 目標の音の表示 -->
     <div class="target-area">
@@ -279,6 +443,13 @@
       <!-- メーター（ズレ、OK の範囲、表示する範囲を渡して、針で表示する） -->
       <div class="meter-area">
         <Meter {cents} tolerance={TOLERANCE} range={METER_RANGE} />
+      </div>
+
+      <!-- ゲージ：OK を保てている時間を、横に伸びる棒で表示する。いっぱいになると次の音へ進む -->
+      <!-- aria-hidden は、読み上げで操作する人に、この図を読み上げないようにする設定 -->
+      <div class="hold-track" aria-hidden="true">
+        <!-- holdProgress（0〜1）を100倍して、棒の幅（％）にする -->
+        <div class="hold-bar" style="width: {holdProgress * 100}%"></div>
       </div>
 
       <!-- 判定の結果によって、文字の色を変える（OK は緑、低いは青、高いは赤） -->
@@ -308,6 +479,14 @@
             {/if}
           </p>
         {/if}
+      </div>
+    {/if}
+
+    <!-- 最後の音まで通過したときの表示 -->
+    {#if isFinished}
+      <div class="finished-area">
+        <p class="finished-text">最後まで弾けました</p>
+        <button class="restart-button" onclick={restart}>最初からもう一度</button>
       </div>
     {/if}
 
@@ -428,6 +607,45 @@
   /* メーターのエリア：目標の音の表示から少し離す */
   .meter-area {
     margin-top: 12px;
+  }
+
+  /* ゲージの枠（グレー）：OK を保てている時間を表示する棒の、背景になる部分 */
+  .hold-track {
+    height: 8px;
+    margin-top: 4px;
+    background-color: #e0e0e0;
+    border-radius: 4px;
+    /* 中の棒が、角の丸みからはみ出さないようにする */
+    overflow: hidden;
+  }
+
+  /* ゲージの棒（緑）：OK を保てている間、左から右へ伸びる */
+  .hold-bar {
+    height: 100%;
+    background-color: #2e7d32;
+  }
+
+  /* 最後まで弾けたときの表示のエリア：中央に寄せる */
+  .finished-area {
+    margin-top: 12px;
+    text-align: center;
+  }
+
+  /* 「最後まで弾けました」の文字：緑で大きく表示する */
+  .finished-text {
+    margin: 0;
+    font-size: 1.4rem;
+    font-weight: bold;
+    color: #2e7d32;
+  }
+
+  /* 「最初からもう一度」ボタン：白地に緑の枠 */
+  button.restart-button {
+    width: 100%;
+    margin-top: 8px;
+    color: #2e7d32;
+    background-color: white;
+    border: 2px solid #2e7d32;
   }
 
   /* 判定の表示のエリア：中央に寄せる */
