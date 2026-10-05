@@ -12,8 +12,9 @@
   // 音律の一覧と、周波数や平均律からのズレを計算する関数を読み込む
   import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID, getTemperament, getFrequency, getCentsFromEqual } from "#lib/tuning.js";
 
-  // 設定（音律、音を鳴らすかどうか）をブラウザに保存する関数と、読み込む関数を読み込む
-  import { loadTemperamentId, saveTemperamentId, loadSoundEnabled, saveSoundEnabled } from "#lib/settings.js";
+  // 設定（音律、音を鳴らすかどうか）と、作業中の楽譜を、
+  // ブラウザに保存する関数と、読み込む関数を読み込む
+  import { loadTemperamentId, saveTemperamentId, loadSoundEnabled, saveSoundEnabled, loadCurrentScore, saveCurrentScore } from "#lib/settings.js";
 
   // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む
   import { playTone, stopTone } from "#lib/audio.js";
@@ -113,12 +114,68 @@
   // 再生を始めた音が何番目か
   let playbackStartIndex = 0;
 
-  // このページが画面に表示された直後に、保存された設定をブラウザから読み込む
+  // 保存された楽譜の読み込みが終わったかどうか（true：終わった、false：まだ）
+  // 読み込む前に自動保存が動くと、保存されていた楽譜を空の楽譜で上書きしてしまうので、
+  // 読み込みが終わるまでは保存しないようにするための目印
+  let isLoaded = $state(false);
+
+  // このページが画面に表示された直後に、保存された設定と楽譜をブラウザから読み込む
   // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
   onMount(() => {
     temperamentId = loadTemperamentId();
     soundEnabled = loadSoundEnabled();
+
+    // 作業中の楽譜を読み込む（保存されていないときは null が入り、何もしない）
+    const savedScore = loadCurrentScore();
+    if (savedScore !== null) {
+      // 調（一覧にない id が保存されていた場合は、getKey がハ長調にしてくれる）
+      keyId = getKey(savedScore.keyId).id;
+
+      // テンポ（最小と最大の間に収まるようにする）
+      tempo = Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, savedScore.tempo));
+
+      // 音の並び
+      notes = savedScore.notes;
+    }
+
+    // 読み込みが終わったので、ここから先は自動保存を動かす
+    isLoaded = true;
   });
+
+  // 楽譜（調・テンポ・音の並び）が変わるたびに、ブラウザに自動で保存する
+  // $effect の中で使っている値が変わるたびに、自動で実行される
+  $effect(() => {
+    // 読み込みが終わるまでは保存しない
+    if (!isLoaded) {
+      return;
+    }
+
+    saveCurrentScore({
+      keyId: keyId,
+      tempo: tempo,
+      notes: notes,
+    });
+  });
+
+  /**
+   * 音をすべて消す関数
+   * 「すべて消す」ボタンを押したときに呼ばれる。
+   * 押し間違いを防ぐために、消す前に確認する。調とテンポはそのまま残す。
+   */
+  function clearAllNotes() {
+    // 確認の画面を出す（「キャンセル」を押すと false が返るので、何もせずに終わる）
+    if (!confirm(notes.length + "音をすべて消します。よろしいですか？")) {
+      return;
+    }
+
+    // 再生中なら止める
+    stopPlayback();
+
+    // 音の並びを空にして、選択も解除する
+    notes = [];
+    selectedIndex = null;
+    editMode = "replace";
+  }
 
   // このページが画面から消えるときに、再生を止める
   // （止めないと、別のページに移っても音が鳴り続けてしまうため）
@@ -484,6 +541,10 @@
       <input type="checkbox" checked={soundEnabled} onchange={(event) => changeSoundEnabled(event.currentTarget.checked)} />
       音を入れたとき・選んだときに音を鳴らす
     </label>
+
+    <!-- 音をすべて消すボタン（音が1つもないときは押せない） -->
+    <!-- 押し間違えると困るので、ふだんは見えない「設定」の中に置いている -->
+    <button class="clear-button" disabled={notes.length === 0} onclick={clearAllNotes}> 音をすべて消す </button>
   </details>
 
   <!-- 五線譜（登録した音の並びと、調号の数を渡して表示する） -->
@@ -715,6 +776,16 @@
     gap: 6px;
     margin-top: 6px;
     cursor: pointer;
+  }
+
+  /* 「音をすべて消す」ボタン：小さく、赤い枠で表示する */
+  button.clear-button {
+    margin-top: 10px;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    color: #c62828;
+    background-color: white;
+    border: 1px solid #c62828;
   }
 
   /* 登録した音の一覧：1行だけ表示して、はみ出した分は横にスクロールする */
