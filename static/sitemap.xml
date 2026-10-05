@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- サイトマップ：検索エンジンに「このページを見てください」と伝えるための、ページの一覧 -->
-<!-- 検索に載せるのはホームだけなので、ホームのアドレスだけを書く -->
+<!-- 検索に載せるのは、ホームと指板の図のページ（誰が見ても同じ内容のページ）だけ -->
 <!-- （編集・練習などのページは、noindex を付けてあるので、ここには書かない） -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://violin-pitch.vercel.app/</loc>
+  </url>
+  <url>
+    <loc>https://violin-pitch.vercel.app/fingerboard</loc>
   </url>
 </urlset>

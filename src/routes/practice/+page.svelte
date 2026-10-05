@@ -347,7 +347,13 @@
     <a class="link-button" href="/score">楽譜の編集へ</a>
   {:else}
     <!-- 楽譜の調と音律（編集ページで決めたものを表示するだけで、ここでは変えられない） -->
-    <p class="score-info">{getKeyLabel(currentKey)}・{currentTemperament.name}</p>
+    <!-- 調と音律の表示と、指板の図へのリンクを横に並べる -->
+    <div class="score-info-row">
+      <p class="score-info">{getKeyLabel(currentKey)}・{currentTemperament.name}</p>
+
+      <!-- 指板の図へのリンク。アドレスの最後に「?key=調の id」を付けて、楽譜の調を引き継ぐ -->
+      <a class="fingerboard-link" href="/fingerboard?key={keyId}">指板で見る →</a>
+    </div>
 
     <!-- 楽譜の名前と最高点：保存した楽譜を開いているときだけ表示する -->
     {#if savedId !== null}
@@ -531,6 +537,23 @@
     margin: 0;
     font-size: 0.85rem;
     color: #616161;
+  }
+
+  /* 調と音律の表示と、指板の図へのリンクを横に並べる（表示は左、リンクは右） */
+  .score-info-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  /* 指板の図へのリンク：小さな青い文字。途中で折り返さない */
+  .fingerboard-link {
+    flex-shrink: 0;
+    font-size: 0.85rem;
+    color: #1976d2;
+    text-decoration: none;
+    white-space: nowrap;
   }
 
   /* 練習する区間の行：「区間」の文字・今の区間・ボタンを横に並べる */

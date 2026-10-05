@@ -584,8 +584,13 @@
     </select>
   </div>
 
-  <!-- 選択中の調の音階（どの音に♯・♭が付くかを確認するための表示） -->
-  <p class="scale">{scaleNames.join(" ")}</p>
+  <!-- 選択中の調の音階（どの音に♯・♭が付くかを確認するための表示）と、指板の図へのリンクを横に並べる -->
+  <div class="scale-row">
+    <p class="scale">{scaleNames.join(" ")}</p>
+
+    <!-- 指板の図へのリンク。アドレスの最後に「?key=調の id」を付けて、今選んでいる調を引き継ぐ -->
+    <a class="fingerboard-link" href="/fingerboard?key={keyId}">指板で見る →</a>
+  </div>
 
   <!-- あまり使わない設定：ふだんはたたんでおき、「設定」を押したときだけ開く -->
   <!-- details と summary は、押すと開いたり閉じたりする部品を作るためのタグ -->
@@ -815,6 +820,23 @@
     margin: 6px 0 0 0;
     font-size: 0.85rem;
     color: #616161;
+  }
+
+  /* 音階と、指板の図へのリンクを横に並べる（音階は左、リンクは右） */
+  .scale-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  /* 指板の図へのリンク：小さな青い文字。途中で折り返さない */
+  .fingerboard-link {
+    flex-shrink: 0;
+    font-size: 0.85rem;
+    color: #1976d2;
+    text-decoration: none;
+    white-space: nowrap;
   }
 
   /* あまり使わない設定（ふだんはたたんである） */
