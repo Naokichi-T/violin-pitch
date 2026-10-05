@@ -41,6 +41,22 @@
   // エラーメッセージ（ないときは空の文字）
   let errorMessage = $state("");
 
+  // 名前の入力欄の部品そのもの。入力欄にカーソルを入れるために使う
+  // 入力欄が画面に出ていないときは null
+  let nameInputElement = $state(null);
+
+  // 名前の入力欄が画面に出たら、すぐ入力できるように、カーソルを入れる
+  // $effect の中で使っている値（nameInputElement）が変わるたびに、自動で実行される
+  $effect(() => {
+    if (nameInputElement !== null) {
+      // focus：入力欄にカーソルを入れる（スマホでは、文字入力のキーボードも出る）
+      nameInputElement.focus();
+
+      // select：すでに入っている文字を全部選んだ状態にする（そのまま打てば、入れ替えられる）
+      nameInputElement.select();
+    }
+  });
+
   // ===== 画面には表示しない値 =====
 
   // メッセージを消すための予約の番号（予約を取り消すために使う）
@@ -200,7 +216,8 @@
   <form class="name-form" onsubmit={saveWithName}>
     <!-- bind:value を付けると、入力した文字が nameInput に自動で入る -->
     <!-- aria-label は、読み上げで操作する人のための、入力欄の説明 -->
-    <input class="name-input" type="text" aria-label="楽譜の名前" placeholder="楽譜の名前（例：001.きらきら星）" maxlength={NAME_MAX_LENGTH} bind:value={nameInput} />
+    <!-- bind:this を付けると、この入力欄そのものが nameInputElement に入り、カーソルを入れられる -->
+    <input class="name-input" type="text" aria-label="楽譜の名前" placeholder="楽譜の名前（例：001.きらきら星）" maxlength={NAME_MAX_LENGTH} bind:value={nameInput} bind:this={nameInputElement} />
 
     <!-- type="submit" のボタンを押すと、フォームが送信されて saveWithName が呼ばれる -->
     <button class="bar-button primary" type="submit">保存する</button>

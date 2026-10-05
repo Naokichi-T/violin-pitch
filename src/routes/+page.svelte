@@ -4,6 +4,7 @@
   <!-- 各ページへのリンク -->
   <nav>
     <a href="/score">楽譜の編集</a>
+    <a href="/library">保存した楽譜</a>
     <a href="/practice">練習</a>
     <a href="/tuner">チューナー</a>
   </nav>

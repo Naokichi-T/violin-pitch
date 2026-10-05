@@ -136,3 +136,24 @@ export function updateSavedScore(id, data) {
 
   return score;
 }
+
+/**
+ * 保存してある楽譜を、一覧から削除する関数
+ * @param {string} id - 削除する楽譜の id
+ * @returns {boolean} 削除できたら true。その id の楽譜がないときや、書き込めなかったときは false
+ */
+export function deleteSavedScore(id) {
+  // 今の一覧を読み込む
+  const scores = loadSavedScores();
+
+  // 削除する楽譜を除いた、新しい一覧を作る
+  const remaining = scores.filter((score) => score.id !== id);
+
+  // 数が変わっていないときは、その id の楽譜がなかった
+  if (remaining.length === scores.length) {
+    return false;
+  }
+
+  // 書き込む
+  return writeSavedScores(remaining);
+}
