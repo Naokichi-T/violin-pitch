@@ -18,6 +18,9 @@
   // 「じっくり」モードの練習の部品を読み込む
   import StepPractice from "#lib/StepPractice.svelte";
 
+  // 「通し」モードの練習の部品を読み込む
+  import RunPractice from "#lib/RunPractice.svelte";
+
   // ===== 練習のモードに関する設定値 =====
 
   // 選べる練習のモードの一覧
@@ -151,8 +154,8 @@
       <!-- 「じっくり」モード：楽譜・調・音律・OK の範囲を渡す -->
       <StepPractice {notes} {currentKey} {temperamentId} {tolerance} />
     {:else}
-      <!-- 「通し」モード：これから作る -->
-      <p class="message">「通し」モードは準備中です（テンポ ♩＝{tempo}）。</p>
+      <!-- 「通し」モード：メトロノームに合わせて目標の音が進む -->
+      <RunPractice {notes} {currentKey} initialTempo={tempo} />
     {/if}
 
     <!-- 編集ページへのリンク -->

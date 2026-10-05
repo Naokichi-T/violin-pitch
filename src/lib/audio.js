@@ -192,3 +192,46 @@ export function playChime(frequencies) {
     oscillator.stop(endTime);
   });
 }
+
+// ===== メトロノームの音に関する設定値 =====
+
+// メトロノームの音の高さ（Hz）
+const CLICK_FREQUENCY = 1000;
+
+// メトロノームの音の大きさ（0〜1）
+const CLICK_VOLUME = 0.3;
+
+// メトロノームの音の長さ（秒）。とても短くして「コッ」という音にする
+const CLICK_DURATION = 0.05;
+
+/**
+ * メトロノームの音（短い「コッ」という音）を1回鳴らす関数
+ * 「通し」モードで、1拍ごとに呼ばれる。
+ */
+export function playClick() {
+  // 音を鳴らすための土台（AudioContext）を取り出す
+  const context = getAudioContext();
+
+  // 今の時刻（AudioContextの中の時計。単位は秒）
+  const now = context.currentTime;
+
+  // 音のもと（発振器）を作る。sine は、まるい音の波
+  const oscillator = context.createOscillator();
+  oscillator.type = "sine";
+  oscillator.frequency.value = CLICK_FREQUENCY;
+
+  // 音量を調節する部品を作る
+  const gain = context.createGain();
+
+  // 最初は決めた音量で鳴らし、すぐに小さくしていく（「コッ」と短く切れる音になる）
+  gain.gain.setValueAtTime(CLICK_VOLUME, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + CLICK_DURATION);
+
+  // 発振器 → 音量 → スピーカー の順につなぐ
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+
+  // 今すぐ鳴らしはじめて、決めた長さで止める
+  oscillator.start(now);
+  oscillator.stop(now + CLICK_DURATION);
+}
