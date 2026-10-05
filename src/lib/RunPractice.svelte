@@ -372,7 +372,9 @@
 </script>
 
 <!-- 五線譜（今の目標の音を、編集ページの「再生中」と同じオレンジで表示する） -->
-<Staff {notes} signature={currentKey.signature} playingIndex={currentIndex} />
+<!-- statuses には、判定の結果の種類だけを取り出した配列を渡す（音符の色と記号になる） -->
+<!-- results.map(…) は、結果を1つずつ取り出して、その中の status だけを並べた配列を作る -->
+<Staff {notes} signature={currentKey.signature} playingIndex={currentIndex} statuses={results.map((result) => result.status)} />
 
 <!-- 今の状態の表示：状態によって、表示する内容を切り替える -->
 <div class="status-area">

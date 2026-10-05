@@ -22,9 +22,29 @@
   // selectedIndex ：選択中の音が何番目か（0から始まる）。選択していないときは null
   // playingIndex  ：再生中の音が何番目か（0から始まる）。再生していないときは null
   // passed        ：それぞれの音を通過したかどうか（notes と同じ順番で、true か false が並ぶ配列）
+  // statuses      ：それぞれの音の判定の結果（notes と同じ順番で並ぶ配列）
+  //                 "ok"（OK）・"high"（高い）・"low"（低い）・"none"（音なし）のどれか。まだ判定していない音は入っていない
   // onselect      ：音符がタップされたときに呼ぶ関数。何番目の音かを渡す
-  // selectedIndex・playingIndex・passed・onselect は、渡されなかったときのための初期値を決めておく
-  let { notes, signature, selectedIndex = null, playingIndex = null, passed = [], onselect = () => {} } = $props();
+  // selectedIndex・playingIndex・passed・statuses・onselect は、渡されなかったときのための初期値を決めておく
+  let { notes, signature, selectedIndex = null, playingIndex = null, passed = [], statuses = [], onselect = () => {} } = $props();
+
+  // 判定の結果の種類ごとの、段の下に表示する記号の形（OK は色だけで、記号は付けない）
+  // 文字の「↑」は端末によって細かったり形が違ったりするので、線で描く。
+  // 中身は「線の描き方」の指示で、記号の中心を (0, 0) とした座標で書いてある
+  //   M x y：ペンを (x, y) に移動する　　L x y：(x, y) まで線を引く
+  //   V y  ：縦に y まで線を引く　　　　　H x  ：横に x まで線を引く
+  const STATUS_MARK_PATHS = {
+    // 高い：上向きの矢印（縦の線と、上の「へ」の形）
+    high: "M0 5 V-5 M-4 -1 L0 -5 L4 -1",
+    // 低い：下向きの矢印（縦の線と、下の「V」の形）
+    low: "M0 -5 V5 M-4 1 L0 5 L4 1",
+    // 音なし：横の線
+    none: "M-4 0 H4",
+  };
+
+  // 判定の結果の記号の、中心の縦の位置（段の一番下）
+  // 一番低い音（ソ3）よりも下なので、どの高さの音符とも重ならない
+  const STATUS_MARK_Y = ROW_HEIGHT - 7;
 
   // 音の並びを、1段ぶん（8音）ずつに分けたもの
   // $derived を付けると、notes が変わるたびに自動で分け直される
@@ -82,6 +102,9 @@
       <!-- 楽譜全体の中で何番目の音か（段の番号 × 1段の音符の数 ＋ 段の中での順番） -->
       {@const noteIndex = rowIndex * NOTES_PER_ROW + indexInRow}
 
+      <!-- この音の判定の結果（まだ判定していない音は undefined になる） -->
+      {@const status = statuses[noteIndex]}
+
       <!-- 音符1つぶんのグループ。g は、SVGの中で複数の図形をまとめるための入れ物 -->
       <!-- このグループのどこをタップしても、この音が選ばれる -->
       <!-- role・tabindex・aria-label・onkeydown は、キーボードや読み上げで操作する人のための設定 -->
@@ -90,6 +113,10 @@
         class:selected={noteIndex === selectedIndex}
         class:playing={noteIndex === playingIndex}
         class:passed={passed[noteIndex] === true}
+        class:status-ok={status === "ok"}
+        class:status-high={status === "high"}
+        class:status-low={status === "low"}
+        class:status-none={status === "none"}
         role="button"
         tabindex="0"
         aria-label="{noteIndex + 1}番目の音"
@@ -120,6 +147,13 @@
           <text class="glyph" x={layout.accidentalX} y={layout.y} font-size={GLYPH_FONT_SIZE} text-anchor="end">
             {layout.accidentalGlyph}
           </text>
+        {/if}
+
+        <!-- 判定の結果の記号：高い（↑）・低い（↓）・音なし（−）のときだけ、段の一番下に表示する -->
+        <!-- STATUS_MARK_PATHS に形がない結果（OK と、まだ判定していない音）は、何も表示しない -->
+        <!-- transform の translate で、記号の中心を「音符の真下・段の一番下」に移動する -->
+        {#if STATUS_MARK_PATHS[status] !== undefined}
+          <path class="status-mark" d={STATUS_MARK_PATHS[status]} transform="translate({layout.x} {STATUS_MARK_Y})" />
         {/if}
       </g>
     {/each}
@@ -196,6 +230,64 @@
   .note.passed .stem,
   .note.passed .ledger-line {
     stroke: #2e7d32;
+  }
+
+  /* 判定の結果の記号（↑ ↓ −）：太めの線で描く。色は、下の結果ごとのスタイルで決める */
+  .status-mark {
+    /* 線だけで描くので、中は塗らない */
+    fill: none;
+    stroke-width: 2.4;
+    /* 線の端と、線のつなぎ目を丸くする */
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* 判定が OK の音符：玉と変化記号を緑にする */
+  /* 選択中・再生中のスタイルより前に書いているので、重なったときは選択中・再生中の色が優先される */
+  .note.status-ok .glyph {
+    fill: #2e7d32;
+  }
+
+  /* 判定が OK の音符：棒と加線を緑にする */
+  .note.status-ok .stem,
+  .note.status-ok .ledger-line {
+    stroke: #2e7d32;
+  }
+
+  /* 判定が「高い」の音符：玉と変化記号を赤にする */
+  .note.status-high .glyph {
+    fill: #c62828;
+  }
+
+  /* 判定が「高い」の音符：棒・加線・記号（↑）を赤にする */
+  .note.status-high .stem,
+  .note.status-high .ledger-line,
+  .note.status-high .status-mark {
+    stroke: #c62828;
+  }
+
+  /* 判定が「低い」の音符：玉と変化記号を青にする */
+  .note.status-low .glyph {
+    fill: #1565c0;
+  }
+
+  /* 判定が「低い」の音符：棒・加線・記号（↓）を青にする */
+  .note.status-low .stem,
+  .note.status-low .ledger-line,
+  .note.status-low .status-mark {
+    stroke: #1565c0;
+  }
+
+  /* 判定が「音なし」の音符：玉と変化記号をグレーにする */
+  .note.status-none .glyph {
+    fill: #9e9e9e;
+  }
+
+  /* 判定が「音なし」の音符：棒・加線・記号（−）をグレーにする */
+  .note.status-none .stem,
+  .note.status-none .ledger-line,
+  .note.status-none .status-mark {
+    stroke: #9e9e9e;
   }
 
   /* 選択中の音符：帯を、透ける青にする */
