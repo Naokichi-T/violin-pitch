@@ -16,6 +16,12 @@ const QUICK_STOP_TIME = 0.03;
 // 高い倍音をどこから弱めるか（Hz）。小さくするほど、やわらかい（こもった）音になる
 const FILTER_FREQUENCY = 2500;
 
+// 合図の音の大きさ（0〜1）。練習の邪魔にならないように、お手本の音より小さくする
+const CHIME_VOLUME = 0.12;
+
+// 合図の音1つぶんの長さ（秒）
+const CHIME_NOTE_SECONDS = 0.12;
+
 // ===== 音を鳴らすための部品 =====
 
 // AudioContext：ブラウザで音を扱うための土台になる部品
@@ -140,4 +146,49 @@ export function playTone(frequency, duration = 0.8) {
       currentGain = null;
     }
   };
+}
+
+/**
+ * 短い合図の音を鳴らす関数
+ * 渡された周波数の音を、1つずつ順に、短く鳴らす。
+ * 澄んだ音（正弦波）を使い、鳴りはじめてすぐに音量を下げていく、鈴のような音にする。
+ * playTone で鳴らしている音とは別に鳴るので、お手本の音を止めることはない。
+ * @param {number[]} frequencies - 鳴らす音の周波数（Hz）の配列。例：[1768] なら1音、[1768, 2652] なら2音を続けて鳴らす
+ */
+export function playChime(frequencies) {
+  // 音を扱う土台を用意する
+  const context = getAudioContext();
+
+  // 今の時刻（AudioContext が動きはじめてからの秒数）
+  const now = context.currentTime;
+
+  // 周波数を1つずつ取り出して、順に鳴らす
+  frequencies.forEach((frequency, index) => {
+    // この音を鳴らしはじめる時刻（1つ前の音が終わる時刻）
+    const startTime = now + index * CHIME_NOTE_SECONDS;
+
+    // この音を鳴らし終える時刻
+    const endTime = startTime + CHIME_NOTE_SECONDS;
+
+    // 音を作る部品。波の形は、倍音を含まない澄んだ「正弦波」にする
+    const oscillator = context.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.value = frequency;
+
+    // 音量を決める部品
+    const gain = context.createGain();
+
+    // 音量を 0 からすばやく上げて、そのあと終わりまでかけて 0 に下げる
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(CHIME_VOLUME, startTime + 0.01);
+    gain.gain.linearRampToValueAtTime(0, endTime);
+
+    // 部品をつなぐ：音を作る → 音量を決める → スピーカー
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+
+    // 鳴らしはじめる時刻と、止める時刻を予約する
+    oscillator.start(startTime);
+    oscillator.stop(endTime);
+  });
 }

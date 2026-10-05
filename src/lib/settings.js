@@ -16,6 +16,9 @@ const SOUND_ENABLED_STORAGE_KEY = "violin-pitch:sound-enabled";
 // 作業中の楽譜（調・テンポ・音の並び）を保存するときの名前
 const CURRENT_SCORE_STORAGE_KEY = "violin-pitch:current-score";
 
+// 「練習で音を通過したときに、合図の音を鳴らすかどうか」を保存するときの名前
+const CHIME_ENABLED_STORAGE_KEY = "violin-pitch:chime-enabled";
+
 /**
  * 最後に選んだ音律の id を、ブラウザから読み込む関数
  * 保存されていないときや、読み込めないときは、最初の設定（DEFAULT_TEMPERAMENT_ID）を返す。
@@ -169,5 +172,41 @@ export function loadCurrentScore() {
   } catch (error) {
     // 保存領域を使えないときや、保存された文字が壊れていて戻せないとき
     return null;
+  }
+}
+
+/**
+ * 「練習で音を通過したときに、合図の音を鳴らすかどうか」を、ブラウザから読み込む関数
+ * 保存されていないときや、読み込めないときは、「鳴らす」（true）を返す。
+ * ブラウザの中でだけ使える機能なので、ページが画面に表示された後に呼ぶこと。
+ * @returns {boolean} 鳴らすなら true、鳴らさないなら false
+ */
+export function loadChimeEnabled() {
+  try {
+    // 保存されている値を取り出す（'true' か 'false' という文字で入っている）
+    const saved = localStorage.getItem(CHIME_ENABLED_STORAGE_KEY);
+
+    // 'false' と保存されているときだけ「鳴らさない」にする
+    if (saved === "false") {
+      return false;
+    }
+  } catch (error) {
+    // 保存領域を使えないときは何もせず、下で「鳴らす」を返す
+  }
+
+  // 保存されていないとき、'true' のとき、読み込めなかったとき
+  return true;
+}
+
+/**
+ * 「練習で音を通過したときに、合図の音を鳴らすかどうか」を、ブラウザに保存する関数
+ * @param {boolean} enabled - 鳴らすなら true、鳴らさないなら false
+ */
+export function saveChimeEnabled(enabled) {
+  try {
+    // true・false を、'true'・'false' という文字に直して保存する
+    localStorage.setItem(CHIME_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (error) {
+    // 保存領域を使えないときは、保存をあきらめる（アプリはそのまま使える）
   }
 }

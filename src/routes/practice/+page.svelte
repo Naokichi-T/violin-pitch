@@ -12,11 +12,12 @@
   // 音律のデータと、周波数や平均律からのズレを計算する関数を読み込む
   import { DEFAULT_TEMPERAMENT_ID, getTemperament, getFrequency, getCentsFromEqual } from "#lib/tuning.js";
 
-  // 保存された音律と、作業中の楽譜を、ブラウザから読み込む関数を読み込む
-  import { loadTemperamentId, loadCurrentScore } from "#lib/settings.js";
+  // 保存された音律・作業中の楽譜・合図の音の設定を、ブラウザから読み込む関数と、
+  // 合図の音の設定をブラウザに保存する関数を読み込む
+  import { loadTemperamentId, loadCurrentScore, loadChimeEnabled, saveChimeEnabled } from "#lib/settings.js";
 
-  // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む
-  import { playTone, stopTone } from "#lib/audio.js";
+  // 指定した周波数の音を鳴らす関数、鳴っている音を止める関数、合図の音を鳴らす関数を読み込む
+  import { playTone, stopTone, playChime } from "#lib/audio.js";
 
   // マイクの音の高さを調べはじめる関数と、やめる関数を読み込む
   import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
@@ -298,6 +299,53 @@
     holdProgress = 0;
   }
 
+  // ===== 通過の合図の音 =====
+
+  // 合図の音の高さの上限（Hz）。これより高いと耳に痛いので、超えないようにする
+  const CHIME_MAX_FREQUENCY = 3000;
+
+  // 音を通過したときに、合図の音を鳴らすかどうか（true：鳴らす、false：鳴らさない）
+  // 最初は「鳴らす」にしておき、画面に表示された後で、保存された設定に入れ替える
+  let chimeEnabled = $state(true);
+
+  // このページが画面に表示された直後に、保存された合図の音の設定をブラウザから読み込む
+  onMount(() => {
+    chimeEnabled = loadChimeEnabled();
+  });
+
+  /**
+   * 合図の音を鳴らすかどうかを切り替える関数
+   * 「設定」の中のチェックボックスを切り替えたときに呼ばれる。
+   * 設定を切り替えて、次に開いたときのためにブラウザに保存する。
+   * @param {boolean} enabled - 鳴らすなら true、鳴らさないなら false
+   */
+  function changeChimeEnabled(enabled) {
+    // 設定を切り替える
+    chimeEnabled = enabled;
+
+    // ブラウザに保存する
+    saveChimeEnabled(enabled);
+  }
+
+  /**
+   * 合図の音の高さを決める関数
+   * 通過した音の2オクターブ上（周波数が4倍）の音にする。
+   * 弾いた音と同じ音名なので、響きが合って耳ざわりになりにくい。
+   * @param {number} frequency - 通過した音の周波数（Hz）
+   * @returns {number} 合図の音の周波数（Hz）
+   */
+  function getChimeFrequency(frequency) {
+    // 2オクターブ上（1オクターブ上がるごとに周波数が2倍になるので、4倍）
+    let chimeFrequency = frequency * 4;
+
+    // 高くなりすぎたときは、上限を超えなくなるまで、1オクターブずつ下げる
+    while (chimeFrequency > CHIME_MAX_FREQUENCY) {
+      chimeFrequency = chimeFrequency / 2;
+    }
+
+    return chimeFrequency;
+  }
+
   /**
    * 今の目標の音を通過して、次の音へ進む関数
    * OK を必要な時間だけ保てたときに呼ばれる。
@@ -309,10 +357,24 @@
     // 数えていた時間を最初に戻す
     resetHold();
 
+    // 合図の音の高さ（通過した音の2オクターブ上）
+    const chimeFrequency = getChimeFrequency(targetFrequency);
+
     // 最後の音だったときは、ここで終わる
     if (targetIndex === notes.length - 1) {
       isFinished = true;
+
+      // 終わりの合図：通過した音の高さと、その5度上（周波数が1.5倍）の音を続けて鳴らす
+      if (chimeEnabled) {
+        playChime([chimeFrequency, chimeFrequency * 1.5]);
+      }
+
       return;
+    }
+
+    // 通過の合図：短い音を1つ鳴らす
+    if (chimeEnabled) {
+      playChime([chimeFrequency]);
     }
 
     // 通過した音の周波数を覚えておく（次の音と同じ高さかどうかを調べるため）
@@ -513,6 +575,19 @@
 
     <!-- 目標の音をお手本として鳴らすボタン -->
     <button class="listen-button" onclick={playTarget}>♪ 目標の音を聴く</button>
+
+    <!-- あまり使わない設定：ふだんはたたんでおき、「設定」を押したときだけ開く -->
+    <details class="settings">
+      <summary>設定</summary>
+
+      <!-- 音を通過したときに、合図の音を鳴らすかどうかの切り替え -->
+      <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
+      <label class="chime-toggle">
+        <!-- checked で今の設定を表示し、切り替えられたら changeChimeEnabled を呼ぶ -->
+        <input type="checkbox" checked={chimeEnabled} onchange={(event) => changeChimeEnabled(event.currentTarget.checked)} />
+        音を通過したときに合図の音を鳴らす
+      </label>
+    </details>
 
     <!-- 編集ページへのリンク -->
     <a class="edit-link" href="/score">楽譜を編集する</a>
@@ -746,6 +821,27 @@
     color: white;
     background-color: #2e7d32;
     border: none;
+  }
+
+  /* あまり使わない設定（ふだんはたたんである） */
+  .settings {
+    margin-top: 16px;
+    font-size: 0.85rem;
+    color: #616161;
+  }
+
+  /* 「設定」の文字（押すと開く部分） */
+  .settings summary {
+    cursor: pointer;
+  }
+
+  /* 合図の音を鳴らすかどうかのチェックボックス */
+  .chime-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    cursor: pointer;
   }
 
   /* 編集ページへのリンク：小さく、右に寄せて表示する */
