@@ -8,9 +8,9 @@
   // 音律の最初の設定と、音律のデータを探す関数を読み込む
   import { DEFAULT_TEMPERAMENT_ID, getTemperament } from "#lib/tuning.js";
 
-  // 保存された音律・作業中の楽譜・判定のレベルを、ブラウザから読み込む関数と、
-  // 判定のレベルをブラウザに保存する関数を読み込む
-  import { loadTemperamentId, loadCurrentScore, loadLevelId, saveLevelId } from "#lib/settings.js";
+  // 保存された音律・作業中の楽譜・判定のレベル・開放弦の設定を、ブラウザから読み込む関数と、
+  // 判定のレベル・開放弦の設定をブラウザに保存する関数を読み込む
+  import { loadTemperamentId, loadCurrentScore, loadLevelId, saveLevelId, loadOpenStringEnabled, saveOpenStringEnabled } from "#lib/settings.js";
 
   // 判定のレベルの一覧と、レベルのデータを探す関数を読み込む
   import { LEVELS, DEFAULT_LEVEL_ID, getLevel } from "#lib/level.js";
@@ -57,6 +57,10 @@
   // 最初は決まった設定にしておき、画面に表示された後で、保存された設定に入れ替える
   let levelId = $state(DEFAULT_LEVEL_ID);
 
+  // 「開放弦の高さで弾いた音もOKにする」設定（true：する、false：しない）
+  // 最初は「する」にしておき、画面に表示された後で、保存された設定に入れ替える
+  let openStringEnabled = $state(true);
+
   // 調のデータ
   // $derived を付けると、keyId が変わるたびに自動で探し直される
   let currentKey = $derived(getKey(keyId));
@@ -68,11 +72,20 @@
   // 選択中のレベルによって変わる（ノーマルは 10、イージーは 25）
   let tolerance = $derived(getLevel(levelId).tolerance);
 
+  // 開放弦の設定を、画面に表示するかどうか（純正律のときだけ表示する）
+  // ピタゴラス音律は開放弦と同じ高さになり、平均律も差がごく小さいので、設定が必要なのは純正律だけ
+  let showsOpenStringSetting = $derived(temperamentId === "just");
+
+  // 開放弦の高さで弾いた音を、実際に OK にするかどうか
+  // 設定が画面に出ていて（純正律で）、チェックが入っているときだけ true になる
+  let allowOpenString = $derived(showsOpenStringSetting && openStringEnabled);
+
   // このページが画面に表示された直後に、保存された音律・判定のレベル・楽譜をブラウザから読み込む
   // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
   onMount(() => {
     temperamentId = loadTemperamentId();
     levelId = loadLevelId();
+    openStringEnabled = loadOpenStringEnabled();
 
     // 作業中の楽譜を読み込む（保存されていないときは null が入り、何もしない）
     const savedScore = loadCurrentScore();
@@ -103,6 +116,19 @@
 
     // ブラウザに保存する
     saveLevelId(id);
+  }
+
+  /**
+   * 「開放弦の高さで弾いた音もOKにする」設定を切り替える関数
+   * チェックボックスを押したときに呼ばれる。
+   * 設定を切り替えて、次に開いたときのためにブラウザに保存する。
+   * @param {boolean} enabled - チェックが入っているかどうか（true：入っている）
+   */
+  function changeOpenStringEnabled(enabled) {
+    openStringEnabled = enabled;
+
+    // ブラウザに保存する
+    saveOpenStringEnabled(enabled);
   }
 </script>
 
@@ -148,14 +174,24 @@
       {/each}
     </div>
 
+    <!-- 開放弦の設定：純正律のときだけ表示する -->
+    {#if showsOpenStringSetting}
+      <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
+      <label class="open-string-row">
+        <!-- event.currentTarget.checked は、押したあとにチェックが入っているかどうか -->
+        <input type="checkbox" checked={openStringEnabled} onchange={(event) => changeOpenStringEnabled(event.currentTarget.checked)} />
+        開放弦の高さで弾いた音もOKにする（ソ3・レ4・ラ4・ミ5）
+      </label>
+    {/if}
+
     <!-- 選択中のモードの練習の部品を表示する -->
     <!-- モードを切り替えると、前のモードの部品は画面から消え、マイクも自動で止まる -->
     {#if modeId === "step"}
       <!-- 「じっくり」モード：楽譜・調・音律・OK の範囲を渡す -->
       <StepPractice {notes} {currentKey} {temperamentId} {tolerance} />
     {:else}
-      <!-- 「通し」モード：メトロノームに合わせて目標の音が進む -->
-      <RunPractice {notes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} />
+      <!-- 「通し」モード：楽譜・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
+      <RunPractice {notes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} {allowOpenString} />
     {/if}
 
     <!-- 編集ページへのリンク -->
@@ -290,6 +326,17 @@
   button.level-button.selected {
     color: white;
     background-color: #1976d2;
+  }
+
+  /* 開放弦の設定：チェックボックスと文字を横に並べ、小さくグレーで表示する */
+  .open-string-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    color: #616161;
+    cursor: pointer;
   }
 
   /* 編集ページへのリンク：小さく、右に寄せて表示する */

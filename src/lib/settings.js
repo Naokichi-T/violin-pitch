@@ -290,3 +290,29 @@ export function saveCountInBeats(value) {
   // ブラウザの保存場所には文字しか入れられないので、数字を文字に変えて保存する
   localStorage.setItem(COUNT_IN_BEATS_KEY, String(value));
 }
+
+// ===== 「開放弦の高さで弾いた音もOKにする」設定 =====
+
+// 開放弦の設定を保存するときの名前（キー）
+const OPEN_STRING_ENABLED_KEY = "violin-pitch:openStringEnabled";
+
+/**
+ * 保存しておいた「開放弦の高さで弾いた音もOKにする」設定を読み込む関数
+ * @returns {boolean} true：OKにする、false：しない。保存していないときは true（最初はオン）
+ */
+export function loadOpenStringEnabled() {
+  // ブラウザの保存場所から、文字として取り出す（保存していないときは null が返る）
+  const text = localStorage.getItem(OPEN_STRING_ENABLED_KEY);
+
+  // 「false」と保存してあるときだけオフにする。保存していないときや、それ以外の内容のときはオン
+  return text !== "false";
+}
+
+/**
+ * 「開放弦の高さで弾いた音もOKにする」設定をブラウザに保存する関数
+ * @param {boolean} enabled - true：OKにする、false：しない
+ */
+export function saveOpenStringEnabled(enabled) {
+  // ブラウザの保存場所には文字しか入れられないので、「true」か「false」の文字に変えて保存する
+  localStorage.setItem(OPEN_STRING_ENABLED_KEY, String(enabled));
+}

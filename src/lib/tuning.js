@@ -189,3 +189,42 @@ export function getCentsFromEqual(note, key, temperamentId) {
   // 周波数の比を、セントに変換する（周波数が2倍で1200セント）
   return 1200 * Math.log2(frequency / equalFrequency);
 }
+
+// ===== 開放弦の高さ =====
+
+// バイオリンの4本の開放弦（指を押さえない弦）の音と、その周波数
+// ラ4（A線）を基準音に合わせ、そこから5度ずつきれいに合わせた、ふつうの調弦の高さ
+// 5度上は周波数が 3/2 倍、5度下は 2/3 倍になる
+const OPEN_STRINGS = [
+  // G線：ソ3（ラ4 から5度を2回下がる。2/3 × 2/3 ＝ 4/9）
+  { step: 4, octave: 3, frequency: (REFERENCE_FREQUENCY * 4) / 9 },
+  // D線：レ4（ラ4 から5度を1回下がる）
+  { step: 1, octave: 4, frequency: (REFERENCE_FREQUENCY * 2) / 3 },
+  // A線：ラ4（基準音）
+  { step: 5, octave: 4, frequency: REFERENCE_FREQUENCY },
+  // E線：ミ5（ラ4 から5度を1回上がる）
+  { step: 2, octave: 5, frequency: (REFERENCE_FREQUENCY * 3) / 2 },
+];
+
+/**
+ * 音が開放弦と同じ音のときに、開放弦の周波数を返す関数
+ * 開放弦と同じ音は、ソ3・レ4・ラ4・ミ5 の4つ（♯や♭が付いた音や、オクターブ違いの音は当てはまらない）。
+ * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
+ * @returns {number|null} 開放弦の周波数（Hz）。開放弦と同じ音でないときは null
+ */
+export function getOpenStringFrequency(note) {
+  // ♯や♭が付いた音は、開放弦では弾けない
+  if (note.accidental !== 0) {
+    return null;
+  }
+
+  // 4本の開放弦を順に見て、音名とオクターブが同じものを探す
+  for (const openString of OPEN_STRINGS) {
+    if (openString.step === note.step && openString.octave === note.octave) {
+      return openString.frequency;
+    }
+  }
+
+  // 見つからなかったときは、開放弦と同じ音ではない
+  return null;
+}

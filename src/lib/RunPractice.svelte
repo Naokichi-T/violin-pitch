@@ -15,8 +15,8 @@
   // セントの数字を「+3」「−8」のような文字にする関数を読み込む
   import { formatCents } from "#lib/note.js";
 
-  // 選んだ音律での、音の周波数を計算する関数を読み込む
-  import { getFrequency } from "#lib/tuning.js";
+  // 選んだ音律での、音の周波数を計算する関数と、開放弦の周波数を返す関数を読み込む
+  import { getFrequency, getOpenStringFrequency } from "#lib/tuning.js";
 
   // 1音ごとの点数と、全体の点数を計算する関数を読み込む
   import { centsToPoints, getTotalScore } from "#lib/scoring.js";
@@ -39,7 +39,8 @@
   // initialTempo ：最初のテンポ（編集ページで決めたテンポ）
   // temperamentId：音律の id（'just'・'pythagorean'・'equal'）
   // tolerance    ：OK とする範囲（セント）。±この値までを OK にする
-  let { notes, currentKey, initialTempo, temperamentId, tolerance } = $props();
+  // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか（true：する）
+  let { notes, currentKey, initialTempo, temperamentId, tolerance, allowOpenString } = $props();
 
   // ===== テンポとカウントに関する設定値 =====
 
@@ -380,7 +381,29 @@
     const playedFrequency = getMedian(samples);
 
     // 目標の音とのずれ（セント）。プラスなら高い、マイナスなら低い
-    const cents = 1200 * Math.log2(playedFrequency / targetFrequency);
+    // （このあと、開放弦とのずれに入れ替えることがあるので、const ではなく let にしている）
+    let cents = 1200 * Math.log2(playedFrequency / targetFrequency);
+
+    // 開放弦の高さと比べた結果を使ったかどうか
+    let usedOpenString = false;
+
+    // 「開放弦の高さで弾いた音もOKにする」とき：開放弦の高さとも比べる
+    if (allowOpenString) {
+      // 目標の音が開放弦と同じ音（ソ3・レ4・ラ4・ミ5）なら、開放弦の周波数が返る。違えば null
+      const openFrequency = getOpenStringFrequency(notes[noteIndex]);
+
+      if (openFrequency !== null) {
+        // 開放弦の高さとのずれ（セント）
+        const openCents = 1200 * Math.log2(playedFrequency / openFrequency);
+
+        // 開放弦とのずれのほうが小さければ、そちらを採用する
+        // Math.abs は、マイナスを取って「ずれの大きさ」にする
+        if (Math.abs(openCents) < Math.abs(cents)) {
+          cents = openCents;
+          usedOpenString = true;
+        }
+      }
+    }
 
     // ずれが範囲内なら OK、範囲より上なら「高い」、下なら「低い」
     let status = "ok";
@@ -390,8 +413,8 @@
       status = "low";
     }
 
-    // 結果を記録する
-    results.push({ status: status, cents: cents });
+    // 結果を記録する（openString は、開放弦の高さと比べた結果のとき true）
+    results.push({ status: status, cents: cents, openString: usedOpenString });
   }
 
   /**
@@ -463,6 +486,10 @@
         <!-- ずれ（セント）は、音なしのときは表示しない -->
         {#if result.cents !== null}
           {formatCents(result.cents)}
+        {/if}
+        <!-- 開放弦の高さと比べた結果のときは、そのことが分かるように印を付ける -->
+        {#if result.openString === true}
+          開放弦
         {/if}
         <!-- この音の点数 -->
         <span class="result-note">{centsToPoints(result.cents)}点</span>
