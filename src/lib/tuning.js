@@ -7,12 +7,30 @@ import { getSignatureAccidentals } from "./key.js";
 // 基準音（ラ4）の周波数（442Hz）を読み込む
 import { REFERENCE_FREQUENCY } from "./note.js";
 
-// ===== 純正律の計算のための設定値 =====
+// ===== 音律に関する設定値 =====
+// 音律は、「それぞれの音をどの高さにするか」の決め方のこと
+
+// 選べる音律の一覧
+//   id          ：音律を区別するための名前（保存するときにも使う）
+//   name        ：画面に表示する名前
+//   description ：どんな場面に向いているかの説明
+export const TEMPERAMENTS = [
+  { id: "just", name: "純正律", description: "和音がきれいに響く高さ。調によって音の高さが変わる" },
+  {
+    id: "pythagorean",
+    name: "ピタゴラス音律",
+    description: "5度の積み重ねで決める高さ。メロディ向きで、開放弦と同じ考え方",
+  },
+  { id: "equal", name: "平均律", description: "ピアノや普通のチューナーと同じ高さ" },
+];
+
+// 最初に選ばれている音律の id（純正律）
+export const DEFAULT_TEMPERAMENT_ID = "just";
 
 // 基準音（ラ4）の音番号
 const REFERENCE_NOTE_NUMBER = 69;
 
-// 主音から半音いくつ分離れているか（0〜11）ごとの、主音との周波数の比率
+// 【純正律】主音から半音いくつ分離れているか（0〜11）ごとの、主音との周波数の比率
 // 例：半音7つ分（完全5度）なら、主音の周波数の 3/2 倍
 const JUST_RATIOS = [
   1 / 1, // 0：主音
@@ -39,15 +57,57 @@ const FIFTHS_FROM_A = [-3, -1, 1, -4, -2, 0, 2];
 const FIFTHS_PER_ACCIDENTAL = 7;
 
 /**
- * 音番号から、平均律での周波数を計算する関数
+ * id から音律のデータを探す関数
+ * @param {string} id - 音律の id（例：'just'）
+ * @returns {object} 音律のデータ。見つからないときは一覧の先頭（純正律）を返す
+ */
+export function getTemperament(id) {
+  // 一覧の中から、id が一致するものを探す
+  const found = TEMPERAMENTS.find((temperament) => temperament.id === id);
+
+  // 見つからなかったとき（古いデータなど）は、一覧の先頭の純正律を返す
+  return found ?? TEMPERAMENTS[0];
+}
+
+/**
+ * 【平均律】音番号から周波数を計算する関数
  * 平均律は、1オクターブを12等分した音律（普通のチューナーやピアノで使われる）。
  * @param {number} noteNumber - 音番号（ラ4 が 69）
  * @returns {number} 平均律での周波数（Hz）
  */
-export function getEqualFrequency(noteNumber) {
+function getEqualFrequency(noteNumber) {
   // 基準音から半音いくつ分離れているかを求め、その分だけ周波数を変える
   // 半音12個（1オクターブ）で、周波数がちょうど2倍になる
   return REFERENCE_FREQUENCY * Math.pow(2, (noteNumber - REFERENCE_NOTE_NUMBER) / 12);
+}
+
+/**
+ * 【ピタゴラス音律】音の周波数を計算する関数
+ * バイオリンの開放弦と同じように、ラ＝442Hz から完全5度（3/2倍）を積み重ねて求める。
+ * 調には関係なく、音名と変化記号とオクターブだけで高さが決まる。
+ * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
+ * @returns {number} ピタゴラス音律での周波数（Hz）
+ *   例：ラ4 は 442、レ4 は 約294.7（D線の開放弦と同じ）
+ */
+function getPythagoreanFrequency(note) {
+  // この音が、ラから完全5度をいくつ分進んだ位置にあるかを求める
+  const fifths = FIFTHS_FROM_A[note.step] + note.accidental * FIFTHS_PER_ACCIDENTAL;
+
+  // ラ＝442Hz に、3/2 を fifths 回掛ける（マイナスのときは、その回数だけ割ることになる）
+  let frequency = REFERENCE_FREQUENCY * Math.pow(3 / 2, fifths);
+
+  // 5度を積み重ねると、オクターブがずれていく。
+  // そこで、この音のオクターブの高さになるまで、2倍または半分にして合わせる。
+  // 目安として平均律での周波数を使い、その近く（半オクターブ以内）に来るまで繰り返す
+  const target = getEqualFrequency(getNoteNumber(note));
+  while (frequency > target * Math.SQRT2) {
+    frequency = frequency / 2;
+  }
+  while (frequency < target / Math.SQRT2) {
+    frequency = frequency * 2;
+  }
+
+  return frequency;
 }
 
 /**
@@ -67,47 +127,20 @@ function getTonicNote(key) {
 }
 
 /**
- * 調の主音（オクターブ4）の周波数を計算する関数
- * バイオリンの開放弦と同じように、ラ＝442Hz から完全5度（3/2倍）を積み重ねて求める。
- * こうすると、主音が開放弦ときれいに響く高さになる。
- * @param {object} key - 調のデータ
- * @returns {number} 主音の周波数（Hz）
- *   例：イ長調なら 442、ニ長調なら 約294.7（D線の開放弦と同じ）
- */
-function getTonicFrequency(key) {
-  // 主音の音のデータ
-  const tonic = getTonicNote(key);
-
-  // 主音が、ラから完全5度をいくつ分進んだ位置にあるかを求める
-  const fifths = FIFTHS_FROM_A[tonic.step] + tonic.accidental * FIFTHS_PER_ACCIDENTAL;
-
-  // ラ＝442Hz に、3/2 を fifths 回掛ける（マイナスのときは、その回数だけ割ることになる）
-  let frequency = REFERENCE_FREQUENCY * Math.pow(3 / 2, fifths);
-
-  // 5度を積み重ねると、オクターブがずれていく。
-  // そこで、オクターブ4の主音の高さになるまで、2倍または半分にして合わせる。
-  // 目安として平均律での主音の周波数を使い、その近く（半オクターブ以内）に来るまで繰り返す
-  const target = getEqualFrequency(getNoteNumber(tonic));
-  while (frequency > target * Math.SQRT2) {
-    frequency = frequency / 2;
-  }
-  while (frequency < target / Math.SQRT2) {
-    frequency = frequency * 2;
-  }
-
-  return frequency;
-}
-
-/**
- * 音の、純正律での周波数を計算する関数
+ * 【純正律】音の周波数を計算する関数
  * 主音から半音いくつ分離れているかを調べ、その音程の比率を主音の周波数に掛ける。
+ * 主音の高さは、開放弦ときれいに響くように、ピタゴラス音律（5度の積み重ね）で決める。
  * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
  * @param {object} key - 調のデータ
  * @returns {number} 純正律での周波数（Hz）
  */
-export function getJustFrequency(note, key) {
-  // 主音（オクターブ4）から、半音いくつ分離れているか（下にあるときはマイナス）
-  const semitones = getNoteNumber(note) - getNoteNumber(getTonicNote(key));
+function getJustFrequency(note, key) {
+  // 主音（オクターブ4）の音のデータと、その周波数
+  const tonic = getTonicNote(key);
+  const tonicFrequency = getPythagoreanFrequency(tonic);
+
+  // 主音から、半音いくつ分離れているか（下にあるときはマイナス）
+  const semitones = getNoteNumber(note) - getNoteNumber(tonic);
 
   // 何オクターブ離れているか（例：半音14個なら1オクターブ上、半音-3個なら1オクターブ下）
   const octaves = Math.floor(semitones / 12);
@@ -116,21 +149,43 @@ export function getJustFrequency(note, key) {
   const semitonesInOctave = semitones - octaves * 12;
 
   // 主音の周波数 × 音程の比率 × オクターブの分（1オクターブ上がるごとに2倍）
-  return getTonicFrequency(key) * JUST_RATIOS[semitonesInOctave] * Math.pow(2, octaves);
+  return tonicFrequency * JUST_RATIOS[semitonesInOctave] * Math.pow(2, octaves);
 }
 
 /**
- * 音の純正律での高さが、平均律と比べて何セントずれているかを計算する関数
+ * 選んだ音律での、音の周波数を計算する関数
+ * 画面の表示・再生・判定は、すべてこの関数で求めた周波数を使う。
+ * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
+ * @param {object} key - 調のデータ（純正律のときだけ使う）
+ * @param {string} temperamentId - 音律の id（'just'・'pythagorean'・'equal'）
+ * @returns {number} 周波数（Hz）
+ */
+export function getFrequency(note, key, temperamentId) {
+  if (temperamentId === "equal") {
+    // 平均律
+    return getEqualFrequency(getNoteNumber(note));
+  } else if (temperamentId === "pythagorean") {
+    // ピタゴラス音律
+    return getPythagoreanFrequency(note);
+  } else {
+    // 純正律（知らない id が来たときも、純正律で計算する）
+    return getJustFrequency(note, key);
+  }
+}
+
+/**
+ * 選んだ音律での音の高さが、平均律と比べて何セントずれているかを計算する関数
  * 普通のチューナー（平均律）で測ったときに、針がどれだけずれて見えるかの目安になる。
  * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
  * @param {object} key - 調のデータ
+ * @param {string} temperamentId - 音律の id（'just'・'pythagorean'・'equal'）
  * @returns {number} 平均律からのズレ（セント）。プラスは平均律より高い、マイナスは低い
  */
-export function getCentsFromEqual(note, key) {
-  // 純正律での周波数と、平均律での周波数
-  const justFrequency = getJustFrequency(note, key);
+export function getCentsFromEqual(note, key, temperamentId) {
+  // 選んだ音律での周波数と、平均律での周波数
+  const frequency = getFrequency(note, key, temperamentId);
   const equalFrequency = getEqualFrequency(getNoteNumber(note));
 
   // 周波数の比を、セントに変換する（周波数が2倍で1200セント）
-  return 1200 * Math.log2(justFrequency / equalFrequency);
+  return 1200 * Math.log2(frequency / equalFrequency);
 }

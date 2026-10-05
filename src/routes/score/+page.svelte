@@ -5,8 +5,14 @@
   // 調のデータに関する設定値と関数を読み込む
   import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames, getSignatureAccidentals } from "#lib/key.js";
 
-  // 純正律での周波数と、平均律からのズレを計算する関数を読み込む
-  import { getJustFrequency, getCentsFromEqual } from "#lib/tuning.js";
+  // onMount：このページが画面に表示された直後に処理をするための仕組み
+  import { onMount } from "svelte";
+
+  // 音律の一覧と、周波数や平均律からのズレを計算する関数を読み込む
+  import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID, getTemperament, getFrequency, getCentsFromEqual } from "#lib/tuning.js";
+
+  // 選んだ音律をブラウザに保存する関数と、読み込む関数を読み込む
+  import { loadTemperamentId, saveTemperamentId } from "#lib/settings.js";
 
   // ズレ（セント）を「+3」「−8」のような表示用の文字にする関数を読み込む
   import { formatCents } from "#lib/note.js";
@@ -40,6 +46,33 @@
   // 選択中の調の調号で、7つの音名それぞれに付く変化記号（1 が♯、-1 が♭、0 がなし）
   // 例：ニ長調のとき [1, 0, 0, 1, 0, 0, 0]（ドとファに♯）
   let keyAccidentals = $derived(getSignatureAccidentals(currentKey.signature));
+
+  // 選択中の音律の id
+  // 最初は決まった設定（純正律）にしておき、画面に表示された後で、保存された設定に入れ替える
+  let temperamentId = $state(DEFAULT_TEMPERAMENT_ID);
+
+  // 選択中の音律のデータ（説明の文を表示するために使う）
+  let currentTemperament = $derived(getTemperament(temperamentId));
+
+  // このページが画面に表示された直後に、最後に選んだ音律をブラウザから読み込む
+  // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
+  onMount(() => {
+    temperamentId = loadTemperamentId();
+  });
+
+  /**
+   * 音律を切り替える関数
+   * 音律のメニューで選び直したときに呼ばれる。
+   * 選んだ音律に切り替えて、次に開いたときのためにブラウザに保存する。
+   * @param {string} id - 選んだ音律の id（'just'・'pythagorean'・'equal'）
+   */
+  function changeTemperament(id) {
+    // 選んだ音律に切り替える
+    temperamentId = id;
+
+    // ブラウザに保存する
+    saveTemperamentId(id);
+  }
 
   // 選択中のオクターブ（最初は4）
   let selectedOctave = $state(4);
@@ -228,6 +261,23 @@
   <!-- 選択中の調の音階（どの音に♯・♭が付くかを確認するための表示） -->
   <p class="scale">{scaleNames.join(" ")}</p>
 
+  <!-- 音律の選択（見た目は、調の選択と同じスタイルを使う） -->
+  <!-- style で上のすき間だけを足して、音階の表示と少し離す -->
+  <div class="key-area" style="margin-top: 12px">
+    <label class="key-label" for="temperament-select">音律</label>
+
+    <!-- value で今の音律をメニューに表示し、選び直されたら changeTemperament を呼ぶ -->
+    <!-- event.currentTarget.value に、選ばれた音律の id が入っている -->
+    <select id="temperament-select" class="key-select" value={temperamentId} onchange={(event) => changeTemperament(event.currentTarget.value)}>
+      {#each TEMPERAMENTS as temperament (temperament.id)}
+        <option value={temperament.id}>{temperament.name}</option>
+      {/each}
+    </select>
+  </div>
+
+  <!-- 選択中の音律の説明（見た目は、音階の表示と同じスタイルを使う） -->
+  <p class="scale">{currentTemperament.description}</p>
+
   <!-- 五線譜（登録した音の並びと、調号の数を渡して表示する） -->
   <!-- selectedIndex で選択中の音を伝え、音符がタップされたら selectNote を呼んでもらう -->
   <Staff {notes} signature={currentKey.signature} {selectedIndex} onselect={selectNote} />
@@ -251,15 +301,15 @@
   <!-- 登録した音の数 -->
   <p class="note-count">（{notes.length}音）</p>
 
-  <!-- 選んだ音の、純正律での周波数と、平均律からのズレ -->
+  <!-- 選んだ音の、選択中の音律での周波数と、平均律からのズレ -->
   <p class="selected-info">
     {#if selectedIndex === null}
-      音を選ぶと、純正律での周波数を表示します
+      音を選ぶと、選択中の音律での周波数を表示します
     {:else}
       <!-- 選んだ音のデータを、短い名前で使えるようにしておく -->
       {@const selectedNote = notes[selectedIndex]}
-      選択中：{noteToText(selectedNote)}　{getJustFrequency(selectedNote, currentKey).toFixed(1)} Hz（平均律より
-      {formatCents(getCentsFromEqual(selectedNote, currentKey))} セント）
+      選択中：{noteToText(selectedNote)}　{getFrequency(selectedNote, currentKey, temperamentId).toFixed(1)} Hz（平均律より
+      {formatCents(getCentsFromEqual(selectedNote, currentKey, temperamentId))} セント）
     {/if}
   </p>
 
