@@ -25,6 +25,9 @@
   // 五線譜を描く部品を読み込む
   import Staff from "#lib/Staff.svelte";
 
+  // 楽譜の名前の表示と、「保存」「新規」のボタンをまとめた部品を読み込む
+  import SaveBar from "#lib/SaveBar.svelte";
+
   // ===== メニューに並べる調の一覧（長調と短調に分けておく） =====
 
   // 長調だけを取り出した一覧
@@ -119,6 +122,13 @@
   // 読み込みが終わるまでは保存しないようにするための目印
   let isLoaded = $state(false);
 
+  // 今開いている楽譜が、保存した楽譜のどれか（その id）。まだ名前を付けて保存していないときは null
+  // 「保存」を押したときに、どの楽譜を上書きするかを決めるために使う
+  let savedId = $state(null);
+
+  // 今開いている楽譜の名前。まだ名前を付けて保存していないときは空の文字
+  let scoreName = $state("");
+
   // このページが画面に表示された直後に、保存された設定と楽譜をブラウザから読み込む
   // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
   onMount(() => {
@@ -136,13 +146,17 @@
 
       // 音の並び
       notes = savedScore.notes;
+
+      // 保存した楽譜のどれを開いているかと、その名前
+      savedId = savedScore.savedId;
+      scoreName = savedScore.name;
     }
 
     // 読み込みが終わったので、ここから先は自動保存を動かす
     isLoaded = true;
   });
 
-  // 楽譜（調・テンポ・音の並び）が変わるたびに、ブラウザに自動で保存する
+  // 楽譜（調・テンポ・音の並び・どの保存した楽譜を開いているか・名前）が変わるたびに、ブラウザに自動で保存する
   // $effect の中で使っている値が変わるたびに、自動で実行される
   $effect(() => {
     // 読み込みが終わるまでは保存しない
@@ -154,8 +168,30 @@
       keyId: keyId,
       tempo: tempo,
       notes: notes,
+      savedId: savedId,
+      name: scoreName,
     });
   });
+
+  /**
+   * 新しい楽譜を作る関数
+   * 「新規」ボタンを押して、確認で「OK」を選んだときに呼ばれる。
+   * 音の並びを空にして、どの保存した楽譜も開いていない状態にする。調・テンポ・音律はそのまま残す。
+   * （保存してある楽譜は消えない。消えるのは、作業中の楽譜の中身だけ）
+   */
+  function createNewScore() {
+    // 再生中なら止める
+    stopPlayback();
+
+    // 音の並びを空にして、選択も解除する
+    notes = [];
+    selectedIndex = null;
+    editMode = "replace";
+
+    // どの保存した楽譜も開いていない状態にする（次に「保存」を押すと、名前を聞かれる）
+    savedId = null;
+    scoreName = "";
+  }
 
   /**
    * 音をすべて消す関数
@@ -493,6 +529,23 @@
     <a class="back-link" href="/">← ホーム</a>
     <h1>楽譜の編集</h1>
   </div>
+
+  <!-- 楽譜の名前と、「新規」「保存」のボタン -->
+  <!-- onsaved：新しく保存できたら、その楽譜の id と名前を覚える（次からは同じ楽譜に上書きされる） -->
+  <!-- onnew：「新規」を押して確認で「OK」を選んだら、新しい楽譜にする -->
+  <SaveBar
+    {keyId}
+    {tempo}
+    {temperamentId}
+    {notes}
+    {savedId}
+    name={scoreName}
+    onsaved={(id, name) => {
+      savedId = id;
+      scoreName = name;
+    }}
+    onnew={createNewScore}
+  />
 
   <!-- 調と音律の選択：2つのメニューを横に並べる -->
   <div class="select-row">

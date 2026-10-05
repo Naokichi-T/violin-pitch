@@ -104,8 +104,10 @@ export function saveSoundEnabled(enabled) {
 /**
  * 作業中の楽譜を、ブラウザに保存する関数
  * 保存しておくと、ページを再読み込みしたときや、練習ページを開いたときに、同じ楽譜を使える。
- * @param {{keyId: string, tempo: number, notes: Array}} score - 楽譜のデータ
- *   keyId：調の id、tempo：テンポ、notes：音のデータの配列
+ * @param {{keyId: string, tempo: number, notes: Array, savedId: string|null, name: string}} score - 楽譜のデータ
+ *   keyId：調の id、tempo：テンポ、notes：音のデータの配列、
+ *   savedId：保存した楽譜のどれを開いているか（その id。まだ名前を付けて保存していないときは null）、
+ *   name：楽譜の名前（まだ名前を付けて保存していないときは空の文字）
  */
 export function saveCurrentScore(score) {
   try {
@@ -144,7 +146,7 @@ function isValidNote(note) {
 /**
  * 作業中の楽譜を、ブラウザから読み込む関数
  * ブラウザの中でだけ使える機能なので、ページが画面に表示された後に呼ぶこと。
- * @returns {{keyId: string, tempo: number, notes: Array}|null}
+ * @returns {{keyId: string, tempo: number, notes: Array, savedId: string|null, name: string}|null}
  *   楽譜のデータ。保存されていないときや、読み込めないときは null
  */
 export function loadCurrentScore() {
@@ -174,6 +176,10 @@ export function loadCurrentScore() {
         accidental: note.accidental,
         octave: note.octave,
       })),
+      // 保存した楽譜のどれを開いているか（文字で入っていないときは、まだ保存していないものとして null にする）
+      savedId: typeof score.savedId === "string" ? score.savedId : null,
+      // 楽譜の名前（文字で入っていないときは、空の文字にする）
+      name: typeof score.name === "string" ? score.name : "",
     };
   } catch (error) {
     // 保存領域を使えないときや、保存された文字が壊れていて戻せないとき
