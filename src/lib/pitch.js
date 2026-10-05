@@ -7,7 +7,9 @@ const MIN_FREQUENCY = 180;
 const MAX_FREQUENCY = 3600;
 
 // これより音が小さいときは検出しない（雑音を拾わないため）
-const MIN_RMS = 0.01;
+// 小さくするほど、弱い音でも検出するようになるが、まわりの物音にも反応しやすくなる
+// const MIN_RMS = 0.01;
+const MIN_RMS = 0.004;
 
 // 波形の「繰り返しのはっきり度」がこれより低いときは検出しない（0〜1、1に近いほどはっきり）
 const MIN_CLARITY = 0.8;
