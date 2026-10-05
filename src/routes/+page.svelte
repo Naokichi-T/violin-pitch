@@ -6,6 +6,9 @@
   // （このバージョンのSvelteKitでは、src/lib フォルダを「#lib」と書いて指す）
   import { calculateRms, detectPitch } from "#lib/pitch.js";
 
+  // 周波数から音名とズレを計算する関数と、ズレを表示用の文字列にする関数を読み込む
+  import { frequencyToNote, formatCents } from "#lib/note.js";
+
   // ===== 設定値 =====
 
   // 直近の検出値を何回分ためておくか（1秒に約60回検出するので、30回分は約0.5秒分）
@@ -27,6 +30,10 @@
 
   // 【確認用】直近の検出値の中での最大値（Hz）。検出できていないときは null
   let frequencyMax = $state(null);
+
+  // 音名とズレの情報。検出できていないときは null
+  // $derived を付けると、frequency が変わるたびに自動で計算し直される
+  let note = $derived(frequency !== null ? frequencyToNote(frequency) : null);
 
   // エラーメッセージ（エラーがないときは空文字）
   let errorMessage = $state("");
@@ -260,6 +267,18 @@
     </div>
   </div>
 
+  <!-- 音名とズレの表示 -->
+  <div class="note-area">
+    <!-- 検出できているときは音名とズレを表示し、できていないときは「---」を表示する -->
+    {#if note !== null}
+      <p class="note-name">{note.name}{note.octave}</p>
+      <p class="note-cents">{formatCents(note.cents)} セント</p>
+    {:else}
+      <p class="note-name">---</p>
+      <p class="note-cents">--- セント</p>
+    {/if}
+  </div>
+
   <!-- 周波数の表示 -->
   <p class="frequency">
     <!-- 検出できているときは小数第1位まで表示し、できていないときは「---」を表示する -->
@@ -347,6 +366,27 @@
   .volume-bar {
     height: 100%;
     background-color: #1976d2;
+  }
+
+  /* 音名とズレのエリア：中央に寄せる */
+  .note-area {
+    margin-top: 32px;
+    text-align: center;
+  }
+
+  /* 音名：一番大きく表示する */
+  .note-name {
+    margin: 0;
+    font-size: 4rem;
+    font-weight: bold;
+  }
+
+  /* ズレ（セント） */
+  .note-cents {
+    margin: 4px 0 0 0;
+    font-size: 1.6rem;
+    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
+    font-variant-numeric: tabular-nums;
   }
 
   /* 周波数の表示：大きく中央に表示する */
