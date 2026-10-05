@@ -8,9 +8,9 @@
   // 音律の最初の設定と、音律のデータを探す関数を読み込む
   import { DEFAULT_TEMPERAMENT_ID, getTemperament } from "#lib/tuning.js";
 
-  // 保存された音律・作業中の楽譜・判定のレベル・開放弦の設定を、ブラウザから読み込む関数と、
-  // 判定のレベル・開放弦の設定をブラウザに保存する関数を読み込む
-  import { loadTemperamentId, loadCurrentScore, loadLevelId, saveLevelId, loadOpenStringEnabled, saveOpenStringEnabled } from "#lib/settings.js";
+  // 保存された音律・作業中の楽譜・判定のレベル・開放弦の設定・練習のモードを、ブラウザから読み込む関数と、
+  // 判定のレベル・開放弦の設定・練習のモードをブラウザに保存する関数を読み込む
+  import { loadTemperamentId, loadCurrentScore, loadLevelId, saveLevelId, loadOpenStringEnabled, saveOpenStringEnabled, loadModeId, saveModeId } from "#lib/settings.js";
 
   // 判定のレベルの一覧と、レベルのデータを探す関数を読み込む
   import { LEVELS, DEFAULT_LEVEL_ID, getLevel } from "#lib/level.js";
@@ -121,6 +121,7 @@
     temperamentId = loadTemperamentId();
     levelId = loadLevelId();
     openStringEnabled = loadOpenStringEnabled();
+    modeId = loadModeId();
 
     // 作業中の楽譜を読み込む（保存されていないときは null が入り、何もしない）
     const savedScore = loadCurrentScore();
@@ -138,6 +139,19 @@
     // 読み込みが終わった
     isLoaded = true;
   });
+
+  /**
+   * 練習のモードを切り替える関数
+   * 「じっくり」「通し」のボタンを押したときに呼ばれる。
+   * 選んだモードに切り替えて、次に開いたときのためにブラウザに保存する。
+   * @param {string} id - 選んだモードの id（'step'：じっくり、'run'：通し）
+   */
+  function changeMode(id) {
+    modeId = id;
+
+    // ブラウザに保存する
+    saveModeId(id);
+  }
 
   /**
    * 判定のレベルを切り替える関数
@@ -271,7 +285,7 @@
     <div class="mode-row">
       {#each MODES as mode (mode.id)}
         <!-- 選択中のモードには selected クラスを付けて色を変える -->
-        <button class="mode-button" class:selected={modeId === mode.id} onclick={() => (modeId = mode.id)}>
+        <button class="mode-button" class:selected={modeId === mode.id} onclick={() => changeMode(mode.id)}>
           <span class="mode-name">{mode.name}</span>
           <span class="mode-description">{mode.description}</span>
         </button>

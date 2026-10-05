@@ -316,3 +316,28 @@ export function saveOpenStringEnabled(enabled) {
   // ブラウザの保存場所には文字しか入れられないので、「true」か「false」の文字に変えて保存する
   localStorage.setItem(OPEN_STRING_ENABLED_KEY, String(enabled));
 }
+
+// ===== 練習のモード（じっくり・通し） =====
+
+// 練習のモードを保存するときの名前（キー）
+const MODE_ID_KEY = "violin-pitch:modeId";
+
+/**
+ * 保存しておいた練習のモードを読み込む関数
+ * @returns {string} モードの id（'step'：じっくり、'run'：通し）。保存していないとき・知らない値のときは 'step'
+ */
+export function loadModeId() {
+  // ブラウザの保存場所から、文字として取り出す（保存していないときは null が返る）
+  const text = localStorage.getItem(MODE_ID_KEY);
+
+  // 「通し」と保存してあるときだけ「通し」にする。それ以外は「じっくり」
+  return text === "run" ? "run" : "step";
+}
+
+/**
+ * 練習のモードをブラウザに保存する関数
+ * @param {string} id - モードの id（'step'：じっくり、'run'：通し）
+ */
+export function saveModeId(id) {
+  localStorage.setItem(MODE_ID_KEY, id);
+}
