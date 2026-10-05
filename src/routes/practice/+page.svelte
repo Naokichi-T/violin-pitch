@@ -21,6 +21,9 @@
   // 「通し」モードの練習の部品を読み込む
   import RunPractice from "#lib/RunPractice.svelte";
 
+  // 五線譜を描く部品を読み込む（区間を選ぶときに、楽譜の全体を表示するために使う）
+  import Staff from "#lib/Staff.svelte";
+
   // ===== 練習のモードに関する設定値 =====
 
   // 選べる練習のモードの一覧
@@ -63,6 +66,32 @@
 
   // 開放弦の設定の説明を表示しているかどうか（true：表示している）。「？」ボタンで切り替える
   let showsOpenStringHelp = $state(false);
+
+  // ===== 練習する区間 =====
+
+  // 練習する区間の、始めの音と終わりの音が何番目か（0から始まる）
+  // 区間を決めていないとき（楽譜の全体を練習するとき）は、どちらも null
+  let rangeStart = $state(null);
+  let rangeEnd = $state(null);
+
+  // 区間を選んでいる最中かどうか（true：選んでいる最中）
+  // 選んでいる間は、練習の部品の代わりに、楽譜の全体を表示する
+  let isSelectingRange = $state(false);
+
+  // 区間を選んでいる最中に、1回目にタップした音が何番目か（0から始まる）
+  // まだ1回もタップしていないときは null
+  let pendingIndex = $state(null);
+
+  // 練習する音の並び。区間を決めているときは、その区間の音だけを取り出したもの
+  // notes.slice(始め, 終わりの次) は、配列の一部分を取り出して、新しい配列を作る
+  let practiceNotes = $derived(rangeStart === null ? notes : notes.slice(rangeStart, rangeEnd + 1));
+
+  // 画面に表示する、今の区間の説明（例：「全体（8音）」「3〜6番目（4音）」）
+  let rangeText = $derived(rangeStart === null ? `全体（${notes.length}音）` : `${rangeStart + 1}〜${rangeEnd + 1}番目（${practiceNotes.length}音）`);
+
+  // 区間が変わったことを見分けるための目印（例：「2-5」。全体のときは「null-null」）
+  // この目印が変わると、練習の部品を作り直して、最初の音からやり直す
+  let rangeKey = $derived(`${rangeStart}-${rangeEnd}`);
 
   // 調のデータ
   // $derived を付けると、keyId が変わるたびに自動で探し直される
@@ -122,6 +151,66 @@
   }
 
   /**
+   * 区間を選びはじめる関数
+   * 区間の「変更」ボタンを押したときに呼ばれる。
+   * 練習の部品の代わりに楽譜の全体を表示して、音符をタップできるようにする。
+   */
+  function openRangeSelector() {
+    // まだ1回もタップしていない状態にしてから、選んでいる最中にする
+    pendingIndex = null;
+    isSelectingRange = true;
+  }
+
+  /**
+   * 区間を選ぶのをやめる関数
+   * 「キャンセル」ボタンを押したときに呼ばれる。区間は、選ぶ前のままにする。
+   */
+  function closeRangeSelector() {
+    pendingIndex = null;
+    isSelectingRange = false;
+  }
+
+  /**
+   * 区間を選んでいる最中に、音符がタップされたときの処理をする関数
+   * 1回目のタップで片方の端を覚え、2回目のタップで区間を決める。
+   * @param {number} noteIndex - タップされた音が何番目か（0から始まる）
+   */
+  function handleRangeTap(noteIndex) {
+    // 1回目のタップ：タップされた音を覚えて、2回目を待つ
+    if (pendingIndex === null) {
+      pendingIndex = noteIndex;
+      return;
+    }
+
+    // 2回目のタップ：2つの音のうち、前にあるほうを始め、後ろにあるほうを終わりにする
+    // （終わりの音を先にタップしても、正しい区間になるようにするため）
+    const start = Math.min(pendingIndex, noteIndex);
+    const end = Math.max(pendingIndex, noteIndex);
+
+    if (start === 0 && end === notes.length - 1) {
+      // 最初の音から最後の音までを選んだとき：「全体」と同じなので、区間を決めていない状態にする
+      rangeStart = null;
+      rangeEnd = null;
+    } else {
+      // それ以外：選んだ区間にする
+      rangeStart = start;
+      rangeEnd = end;
+    }
+
+    // 選ぶのを終わりにする
+    closeRangeSelector();
+  }
+
+  /**
+   * 区間を「全体」に戻す関数
+   * 「全体に戻す」ボタンを押したときに呼ばれる。
+   */
+  function clearRange() {
+    rangeStart = null;
+    rangeEnd = null;
+  }
+
+  /**
    * 「開放弦の高さで弾いた音もOKにする」設定を切り替える関数
    * チェックボックスを押したときに呼ばれる。
    * 設定を切り替えて、次に開いたときのためにブラウザに保存する。
@@ -152,6 +241,20 @@
   {:else}
     <!-- 楽譜の調と音律（編集ページで決めたものを表示するだけで、ここでは変えられない） -->
     <p class="score-info">{getKeyLabel(currentKey)}・{currentTemperament.name}</p>
+
+    <!-- 練習する区間：今の区間の説明と、「変更」「全体に戻す」のボタンを横に並べる -->
+    <div class="range-row">
+      <span class="range-caption">区間</span>
+      <span class="range-text">{rangeText}</span>
+
+      <!-- 「全体に戻す」ボタン：区間を決めているときだけ表示する -->
+      {#if rangeStart !== null}
+        <button class="range-button" disabled={isSelectingRange} onclick={clearRange}> 全体に戻す </button>
+      {/if}
+
+      <!-- 「変更」ボタン：区間を選びはじめる（選んでいる最中は押せない） -->
+      <button class="range-button" disabled={isSelectingRange} onclick={openRangeSelector}> 変更 </button>
+    </div>
 
     <!-- 練習のモードの切り替え：名前と短い説明を付けたボタンを横に並べる -->
     <div class="mode-row">
@@ -204,14 +307,39 @@
       {/if}
     {/if}
 
-    <!-- 選択中のモードの練習の部品を表示する -->
-    <!-- モードを切り替えると、前のモードの部品は画面から消え、マイクも自動で止まる -->
-    {#if modeId === "step"}
-      <!-- 「じっくり」モード：楽譜・調・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
-      <StepPractice {notes} {currentKey} {temperamentId} {tolerance} {allowOpenString} />
+    {#if isSelectingRange}
+      <!-- 区間を選んでいる最中：練習の部品の代わりに、楽譜の全体を表示する -->
+      <!-- （練習の部品は画面から消えるので、練習の途中だった場合は、マイクも自動で止まる） -->
+      <div class="range-selector">
+        <!-- 案内：1回目のタップの前と後で、文を変える -->
+        <p class="range-guide">
+          {#if pendingIndex === null}
+            区間の<strong>始めの音</strong>をタップしてください
+          {:else}
+            区間の<strong>終わりの音</strong>をタップしてください（{pendingIndex + 1}番目から）
+          {/if}
+        </p>
+
+        <!-- 楽譜の全体。1回目にタップした音は、選択中の青い帯で表示する -->
+        <Staff {notes} signature={currentKey.signature} selectedIndex={pendingIndex} onselect={handleRangeTap} />
+
+        <!-- 選ぶのをやめるボタン -->
+        <button class="range-cancel-button" onclick={closeRangeSelector}>キャンセル</button>
+      </div>
     {:else}
-      <!-- 「通し」モード：楽譜・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
-      <RunPractice {notes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} {allowOpenString} />
+      <!-- 選択中のモードの練習の部品を表示する -->
+      <!-- モードを切り替えると、前のモードの部品は画面から消え、マイクも自動で止まる -->
+      <!-- key で囲むと、rangeKey（区間の目印）が変わったときに、中の部品が作り直される -->
+      <!-- （区間を変えたら、前の区間での進み具合や結果を消して、最初の音からやり直すため） -->
+      {#key rangeKey}
+        {#if modeId === "step"}
+          <!-- 「じっくり」モード：練習する音・調・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
+          <StepPractice notes={practiceNotes} {currentKey} {temperamentId} {tolerance} {allowOpenString} />
+        {:else}
+          <!-- 「通し」モード：練習する音・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
+          <RunPractice notes={practiceNotes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} {allowOpenString} />
+        {/if}
+      {/key}
     {/if}
 
     <!-- 編集ページへのリンク -->
@@ -271,6 +399,75 @@
     margin: 0;
     font-size: 0.85rem;
     color: #616161;
+  }
+
+  /* 練習する区間の行：「区間」の文字・今の区間・ボタンを横に並べる */
+  .range-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  /* 「区間」の文字 */
+  .range-caption {
+    font-size: 0.85rem;
+    color: #616161;
+    flex-shrink: 0;
+  }
+
+  /* 今の区間の説明：残りの横幅を使って、ボタンを右に寄せる */
+  .range-text {
+    flex: 1;
+    font-size: 0.95rem;
+    /* 数字の幅をそろえる */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 区間の「変更」「全体に戻す」ボタン：白地に青い枠の、小さめのボタン */
+  button.range-button {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    font-size: 0.9rem;
+    color: #1976d2;
+    background-color: white;
+    border: 2px solid #1976d2;
+  }
+
+  /* 押せない状態のボタン：薄く表示する */
+  button.range-button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* 区間を選ぶエリア：薄い青の枠で囲んで、ふだんの練習の画面と違うことが分かるようにする */
+  .range-selector {
+    margin-top: 12px;
+    padding: 8px;
+    border: 2px solid #90caf9;
+    border-radius: 8px;
+  }
+
+  /* 区間を選ぶときの案内の文 */
+  .range-guide {
+    margin: 0 0 4px 0;
+    font-size: 0.95rem;
+  }
+
+  /* 案内の中の強調する部分（「始めの音」「終わりの音」）：青い太字にする */
+  .range-guide strong {
+    color: #0d47a1;
+  }
+
+  /* 「キャンセル」ボタン：横幅いっぱいの、グレーの枠のボタン */
+  button.range-cancel-button {
+    width: 100%;
+    margin-top: 4px;
+    padding: 8px 0;
+    font-size: 0.9rem;
+    color: #616161;
+    background-color: white;
+    border: 2px solid #9e9e9e;
   }
 
   /* 練習のモードの切り替え：2つのボタンを横に並べる */
