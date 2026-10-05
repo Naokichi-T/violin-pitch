@@ -24,8 +24,8 @@ export const TEMPERAMENTS = [
   { id: "equal", name: "平均律", description: "ピアノや普通のチューナーと同じ高さ" },
 ];
 
-// 最初に選ばれている音律の id（純正律）
-export const DEFAULT_TEMPERAMENT_ID = "just";
+// 最初に選ばれている音律の id（ピタゴラス音律）
+export const DEFAULT_TEMPERAMENT_ID = "pythagorean";
 
 // 基準音（ラ4）の音番号
 const REFERENCE_NOTE_NUMBER = 69;
