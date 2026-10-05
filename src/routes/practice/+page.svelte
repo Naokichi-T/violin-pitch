@@ -18,11 +18,31 @@
   // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む
   import { playTone, stopTone } from "#lib/audio.js";
 
-  // ズレ（セント）を「+3」「−8」のような表示用の文字にする関数を読み込む
-  import { formatCents } from "#lib/note.js";
+  // マイクの音の高さを調べはじめる関数と、やめる関数を読み込む
+  import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
+
+  // ズレ（セント）を「+3」「−8」のような表示用の文字にする関数と、
+  // 周波数から一番近い音名を求める関数を読み込む
+  import { formatCents, frequencyToNote } from "#lib/note.js";
 
   // 五線譜を描く部品を読み込む
   import Staff from "#lib/Staff.svelte";
+
+  // ===== 判定に関する設定値 =====
+
+  // 「OK」とする範囲（セント）。目標の音とのズレがこの範囲に入っていれば OK
+  // 今はノーマルの値だけ。あとで、ノーマルとイージーを切り替えられるようにする
+  const TOLERANCE = 10;
+
+  // メーターに表示する範囲（セント）。ズレがこれを超えたら「もっと高い」「もっと低い」と表示する
+  const METER_RANGE = 50;
+
+  // お手本の音を鳴らす長さ（秒）
+  const LISTEN_SECONDS = 1;
+
+  // お手本の音を鳴らしたあと、判定を止めておく時間（ミリ秒）
+  // お手本の音をマイクが拾って「OK」になってしまうのを防ぐため、鳴らす長さより少し長くする
+  const MUTE_MILLISECONDS = LISTEN_SECONDS * 1000 + 200;
 
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
@@ -49,6 +69,21 @@
   // 音律のデータ（名前を表示するために使う）
   let currentTemperament = $derived(getTemperament(temperamentId));
 
+  // マイクで音を聴いているかどうか（true：聴いている、false：止まっている）
+  let isListening = $state(false);
+
+  // マイクで検出した、今弾いている音の周波数（Hz）。音が出ていないときは null
+  let detectedFrequency = $state(null);
+
+  // エラーメッセージ（エラーがないときは空文字）
+  let errorMessage = $state("");
+
+  // ===== 判定のために覚えておく値（画面には表示しないので $state は付けない） =====
+
+  // この時刻（ページを開いてからのミリ秒）までは、判定を止めておく
+  // お手本の音を鳴らしている間、その音をマイクが拾ってしまうため
+  let muteUntil = 0;
+
   // 今の目標の音のデータ（音が1つもないときは null）
   let targetNote = $derived(notes.length > 0 ? notes[targetIndex] : null);
 
@@ -74,10 +109,97 @@
     isLoaded = true;
   });
 
-  // このページが画面から消えるときに、鳴っている音を止める
+  // 今弾いている音が、目標の音から何セントずれているか。プラスは高い、マイナスは低い
+  // 音が出ていないときや、目標の音がないときは null
+  let cents = $derived(
+    detectedFrequency !== null && targetFrequency !== null
+      ? // 周波数の比を、セントに変換する（周波数が2倍で1200セント）
+        1200 * Math.log2(detectedFrequency / targetFrequency)
+      : null,
+  );
+
+  // 判定の結果。次の4つのどれかが入る
+  //   'none'：音が出ていない
+  //   'ok'  ：OK（ズレが OK の範囲に入っている）
+  //   'low' ：低い
+  //   'high'：高い
+  let judgement = $derived(getJudgement(cents));
+
+  // ズレがメーターの範囲を超えているかどうか（別の音を弾いている可能性が高い）
+  let isFar = $derived(cents !== null && Math.abs(cents) > METER_RANGE);
+
+  // 今弾いている音に一番近い音名（平均律で調べたもの）。音が出ていないときは null
+  // ズレが大きいときに、「今は〇〇の音が出ています」と案内するために使う
+  let detectedNote = $derived(detectedFrequency !== null ? frequencyToNote(detectedFrequency) : null);
+
+  // このページが画面から消えるときに、マイクと、鳴っている音を止める
   onDestroy(() => {
+    stopMicrophone();
     stopTone();
   });
+
+  /**
+   * ズレ（セント）から、判定の結果を決める関数
+   * @param {number|null} centsValue - 目標の音からのズレ（セント）。音が出ていないときは null
+   * @returns {string} 'none'（音が出ていない）・'ok'・'low'（低い）・'high'（高い）のどれか
+   */
+  function getJudgement(centsValue) {
+    if (centsValue === null) {
+      // 音が出ていない
+      return "none";
+    } else if (centsValue < -TOLERANCE) {
+      // OK の範囲より下
+      return "low";
+    } else if (centsValue > TOLERANCE) {
+      // OK の範囲より上
+      return "high";
+    } else {
+      // OK の範囲の中
+      return "ok";
+    }
+  }
+
+  /**
+   * マイクで音を聴きはじめる関数
+   * 「練習を始める」ボタンを押したときに呼ばれる。
+   * マイクの使用許可を取り、弾いている音の高さを調べつづける。
+   */
+  async function startListening() {
+    // 前回のエラーメッセージを消す
+    errorMessage = "";
+
+    try {
+      // マイクを開始する。音の高さが分かるたびに、渡した関数が呼ばれる
+      await startMicrophone((frequency) => {
+        if (performance.now() < muteUntil) {
+          // お手本の音を鳴らしている間は、音が出ていないことにする
+          detectedFrequency = null;
+        } else {
+          // 検出した周波数を入れる（音が出ていないときは null が渡される）
+          detectedFrequency = frequency;
+        }
+      });
+
+      // 聴いている状態にする
+      isListening = true;
+    } catch (error) {
+      // 許可を拒否された場合や、マイクが見つからない場合はここに来る
+      // どんなエラーかは、microphone.js が日本語のメッセージにしてくれている
+      errorMessage = error.message;
+    }
+  }
+
+  /**
+   * マイクで音を聴くのをやめる関数
+   * 「やめる」ボタンを押したときに呼ばれる。
+   */
+  function stopListening() {
+    stopMicrophone();
+
+    // 止まっている状態に戻し、検出した音も消す
+    isListening = false;
+    detectedFrequency = null;
+  }
 
   /**
    * 目標の音を、指定した位置に動かす関数
@@ -96,7 +218,8 @@
   /**
    * 目標の音を鳴らす関数
    * 「目標の音を聴く」ボタンを押したときに呼ばれる。
-   * お手本として、選択中の音律での高さの音を1秒間鳴らす。
+   * お手本として、選択中の音律での高さの音を鳴らす。
+   * マイクで聴いているときは、お手本の音を拾わないように、鳴っている間だけ判定を止める。
    */
   function playTarget() {
     // 目標の音がないときは、何もしない
@@ -104,7 +227,11 @@
       return;
     }
 
-    playTone(targetFrequency, 1);
+    playTone(targetFrequency, LISTEN_SECONDS);
+
+    // お手本の音が鳴っている間は、判定を止めておく
+    muteUntil = performance.now() + MUTE_MILLISECONDS;
+    detectedFrequency = null;
   }
 </script>
 
@@ -143,6 +270,50 @@
         {formatCents(getCentsFromEqual(targetNote, currentKey, temperamentId))} セント）
       </p>
     </div>
+
+    <!-- 判定の表示（マイクで聴いているときだけ表示する） -->
+    {#if isListening}
+      <!-- 判定の結果によって、文字の色を変える（OK は緑、低いは青、高いは赤） -->
+      <div class="judgement-area {judgement}">
+        {#if judgement === "none"}
+          <!-- 音が出ていないとき -->
+          <p class="judgement-text">音を出してください</p>
+          <p class="judgement-detail">　</p>
+        {:else}
+          <!-- 判定の結果を大きく表示する -->
+          <p class="judgement-text">
+            {#if judgement === "ok"}
+              OK
+            {:else if judgement === "low"}
+              {isFar ? "もっと低い" : "低い"}
+            {:else}
+              {isFar ? "もっと高い" : "高い"}
+            {/if}
+          </p>
+
+          <!-- ズレの数値。大きく外れているときは、今出ている音の音名を案内する -->
+          <p class="judgement-detail">
+            {#if isFar}
+              今の音は {detectedNote.name}{detectedNote.octave} 付近です
+            {:else}
+              {formatCents(cents)} セント
+            {/if}
+          </p>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- エラーがあるときだけメッセージを表示する -->
+    {#if errorMessage !== ""}
+      <p class="error">{errorMessage}</p>
+    {/if}
+
+    <!-- マイクで聴いているときは「やめる」ボタン、止まっているときは「練習を始める」ボタンを表示する -->
+    {#if isListening}
+      <button class="listening-button stop" onclick={stopListening}>やめる</button>
+    {:else}
+      <button class="listening-button start" onclick={startListening}>練習を始める（マイクを使います）</button>
+    {/if}
 
     <!-- 目標の音を手動で動かすボタン -->
     <div class="move-row">
@@ -246,11 +417,73 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* 判定の表示のエリア：中央に寄せる */
+  .judgement-area {
+    margin-top: 12px;
+    text-align: center;
+    /* 文字の色は、判定の結果ごとに下で決める。ここは、音が出ていないときのグレー */
+    color: #757575;
+  }
+
+  /* 判定が OK のとき：緑 */
+  .judgement-area.ok {
+    color: #2e7d32;
+  }
+
+  /* 判定が「低い」のとき：青 */
+  .judgement-area.low {
+    color: #1565c0;
+  }
+
+  /* 判定が「高い」のとき：赤 */
+  .judgement-area.high {
+    color: #c62828;
+  }
+
+  /* 判定の結果（OK・低い・高い）：大きく表示する */
+  .judgement-text {
+    margin: 0;
+    font-size: 1.8rem;
+    font-weight: bold;
+  }
+
+  /* ズレの数値や、今出ている音の案内 */
+  .judgement-detail {
+    margin: 0;
+    font-size: 1rem;
+    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* エラーメッセージ */
+  .error {
+    margin: 12px 0 0 0;
+    color: #c62828;
+  }
+
+  /* 「練習を始める」「やめる」ボタン：横幅いっぱいに表示する */
+  button.listening-button {
+    width: 100%;
+    margin-top: 12px;
+    color: white;
+    border: none;
+  }
+
+  /* 「練習を始める」ボタン（青） */
+  button.listening-button.start {
+    background-color: #1976d2;
+  }
+
+  /* 「やめる」ボタン（赤） */
+  button.listening-button.stop {
+    background-color: #c62828;
+  }
+
   /* 「前の音」「次の音」ボタンを横に並べる */
   .move-row {
     display: flex;
     gap: 8px;
-    margin-top: 16px;
+    margin-top: 8px;
   }
 
   /* ボタン共通：指で押しやすい大きさにする */
