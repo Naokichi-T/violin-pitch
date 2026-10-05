@@ -207,8 +207,8 @@
     <!-- 選択中のモードの練習の部品を表示する -->
     <!-- モードを切り替えると、前のモードの部品は画面から消え、マイクも自動で止まる -->
     {#if modeId === "step"}
-      <!-- 「じっくり」モード：楽譜・調・音律・OK の範囲を渡す -->
-      <StepPractice {notes} {currentKey} {temperamentId} {tolerance} />
+      <!-- 「じっくり」モード：楽譜・調・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
+      <StepPractice {notes} {currentKey} {temperamentId} {tolerance} {allowOpenString} />
     {:else}
       <!-- 「通し」モード：楽譜・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
       <RunPractice {notes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} {allowOpenString} />

@@ -10,8 +10,8 @@
   // 音のデータを表示用の文字にする関数を読み込む
   import { noteToText } from "#lib/score.js";
 
-  // 周波数や、平均律からのズレを計算する関数を読み込む
-  import { getFrequency, getCentsFromEqual } from "#lib/tuning.js";
+  // 周波数や、平均律からのズレを計算する関数と、開放弦の周波数を返す関数を読み込む
+  import { getFrequency, getCentsFromEqual, getOpenStringFrequency } from "#lib/tuning.js";
 
   // 合図の音の設定を、ブラウザから読み込む関数と、ブラウザに保存する関数を読み込む
   import { loadChimeEnabled, saveChimeEnabled } from "#lib/settings.js";
@@ -37,7 +37,8 @@
   // currentKey    ：楽譜の調のデータ
   // temperamentId ：音律の id
   // tolerance     ：「OK」とする範囲（セント）。判定のレベルによって変わる
-  let { notes, currentKey, temperamentId, tolerance } = $props();
+  // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか（true：する）
+  let { notes, currentKey, temperamentId, tolerance, allowOpenString } = $props();
 
   // ===== 判定に関する設定値 =====
 
@@ -117,14 +118,34 @@
   // 今の目標の音の、選択中の音律での周波数（Hz）
   let targetFrequency = $derived(getFrequency(targetNote, currentKey, temperamentId));
 
+  // 今の目標の音を開放弦で弾いたときの周波数（Hz）
+  // 「開放弦の高さで弾いた音もOKにする」ときで、目標の音が開放弦と同じ音（ソ3・レ4・ラ4・ミ5）のときだけ入る
+  // それ以外のときは null
+  let openFrequency = $derived(allowOpenString ? getOpenStringFrequency(targetNote) : null);
+
   // 今弾いている音が、目標の音から何セントずれているか。プラスは高い、マイナスは低い
   // 音が出ていないときは null
-  let cents = $derived(
-    detectedFrequency !== null
-      ? // 周波数の比を、セントに変換する（周波数が2倍で1200セント）
-        1200 * Math.log2(detectedFrequency / targetFrequency)
-      : null,
-  );
+  // $derived.by は、何行かの計算の結果を入れておきたいときに使う
+  let cents = $derived.by(() => {
+    // 音が出ていないときは null
+    if (detectedFrequency === null) {
+      return null;
+    }
+
+    // 音律での高さとのずれ。周波数の比を、セントに変換する（周波数が2倍で1200セント）
+    const targetCents = 1200 * Math.log2(detectedFrequency / targetFrequency);
+
+    // 開放弦の高さとは比べないとき：音律での高さとのずれを、そのまま使う
+    if (openFrequency === null) {
+      return targetCents;
+    }
+
+    // 開放弦の高さとのずれ
+    const openCents = 1200 * Math.log2(detectedFrequency / openFrequency);
+
+    // ずれが小さいほうを採用する（Math.abs は、マイナスを取って「ずれの大きさ」にする）
+    return Math.abs(openCents) < Math.abs(targetCents) ? openCents : targetCents;
+  });
 
   // 判定の結果。次の4つのどれかが入る
   //   'none'：音が出ていない
@@ -448,6 +469,11 @@
     {targetFrequency.toFixed(1)} Hz（平均律より
     {formatCents(getCentsFromEqual(targetNote, currentKey, temperamentId))} セント）
   </p>
+
+  <!-- 開放弦の高さでも OK になる音のときは、そのことと、開放弦の周波数を表示する -->
+  {#if openFrequency !== null}
+    <p class="target-frequency">開放弦の高さ（{openFrequency.toFixed(1)} Hz）で弾いてもOK</p>
+  {/if}
 </div>
 
 <!-- 判定の表示（マイクで聴いているときだけ表示する） -->
