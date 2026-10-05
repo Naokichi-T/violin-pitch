@@ -252,3 +252,41 @@ export function saveLevelId(id) {
     // 保存領域を使えないときは、保存をあきらめる（アプリはそのまま使える）
   }
 }
+
+// ===== 「通し」モードのカウントの拍の数 =====
+
+// カウントの拍の数を保存するときの名前（キー）
+const COUNT_IN_BEATS_KEY = "violin-pitch:countInBeats";
+
+/**
+ * 保存しておいたカウントの拍の数を読み込む関数
+ * @returns {number|null} 保存してあった拍の数。保存していないとき・数字として読めないときは null
+ */
+export function loadCountInBeats() {
+  // ブラウザの保存場所から、文字として取り出す（保存していないときは null が返る）
+  const text = localStorage.getItem(COUNT_IN_BEATS_KEY);
+
+  // 保存していないときは null を返す
+  if (text === null) {
+    return null;
+  }
+
+  // 文字を数字に変える
+  const value = Number(text);
+
+  // 整数として読めないとき（保存した内容がおかしいとき）は null を返す
+  if (!Number.isInteger(value)) {
+    return null;
+  }
+
+  return value;
+}
+
+/**
+ * カウントの拍の数をブラウザに保存する関数
+ * @param {number} value - カウントの拍の数
+ */
+export function saveCountInBeats(value) {
+  // ブラウザの保存場所には文字しか入れられないので、数字を文字に変えて保存する
+  localStorage.setItem(COUNT_IN_BEATS_KEY, String(value));
+}

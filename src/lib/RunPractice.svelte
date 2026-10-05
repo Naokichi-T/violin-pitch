@@ -3,15 +3,19 @@
   // メトロノームのテンポに合わせて、目標の音が1拍ごとに次へ進む。
   // （今はまだ、目標の音が進むだけ。音程の判定と点数は、このあと追加する）
 
+  // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
   // untrack：値を「最初の1回だけ」読むための仕組み（下の tempo で使う）
-  import { onDestroy, untrack } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
 
   // 音のデータを表示用の文字にする関数を読み込む
   import { noteToText } from "#lib/score.js";
 
   // メトロノームの音を鳴らす関数を読み込む
   import { playClick } from "#lib/audio.js";
+
+  // カウントの拍の数を、ブラウザに保存する関数と読み込む関数を読み込む
+  import { loadCountInBeats, saveCountInBeats } from "#lib/settings.js";
 
   // 五線譜を描く部品を読み込む
   import Staff from "#lib/Staff.svelte";
@@ -29,8 +33,11 @@
   const TEMPO_MAX = 200;
   const TEMPO_STEP = 5;
 
-  // 弾きはじめる前に、メトロノームだけを鳴らす拍の数（カウント）
-  const COUNT_IN_BEATS = 4;
+  // 弾きはじめる前に、メトロノームだけを鳴らす拍の数（カウント）の最小・最大と、最初の値
+  // （弓を構える時間がほしいので、少し長めにしてある）
+  const COUNT_IN_MIN = 5;
+  const COUNT_IN_MAX = 30;
+  const COUNT_IN_DEFAULT = 10;
 
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
@@ -39,6 +46,10 @@
   // untrack で囲むのは、「最初の値として1回だけ読む」ことをSvelteにはっきり伝えるため
   let tempo = $state(untrack(() => clampTempo(initialTempo)));
 
+  // カウントの拍の数。設定の「−」「＋」で変えられる
+  // 最初は決めておいた値にしておき、保存した値があれば、下の onMount で入れ直す
+  let countInBeats = $state(COUNT_IN_DEFAULT);
+
   // 今の状態。次の4つのどれかが入る
   //   'idle'     ：始める前（または、途中でやめたあと）
   //   'countIn'  ：カウント中（メトロノームだけが鳴っている）
@@ -46,7 +57,7 @@
   //   'finished' ：最後まで進んだ
   let phase = $state("idle");
 
-  // カウントの残りの拍の数（4 → 3 → 2 → 1）。カウント中だけ使う
+  // カウントの残りの拍の数（10 → 9 → … → 1）。カウント中だけ使う
   let countInRemaining = $state(0);
 
   // 今の目標の音が何番目か（0から始まる）。演奏中だけ入り、それ以外は null
@@ -63,6 +74,17 @@
   // 動いている最中かどうか（カウント中か演奏中なら true）
   // $derived を付けると、phase が変わるたびに自動で計算し直される
   let isRunning = $derived(phase === "countIn" || phase === "playing");
+
+  // この部品が画面に表示されたときに、前回保存したカウントの拍の数を読み込む
+  // （ブラウザの保存場所は、画面が表示されたあとでないと使えないため、ここで読み込む）
+  onMount(() => {
+    const savedCountInBeats = loadCountInBeats();
+
+    // 保存した値があるときだけ使う（念のため、最小と最大の間に収める）
+    if (savedCountInBeats !== null) {
+      countInBeats = clampCountIn(savedCountInBeats);
+    }
+  });
 
   // この部品が画面から消えるとき（別のモードに切り替えたときや、ページを離れたとき）に、進行を止める
   onDestroy(() => {
@@ -88,6 +110,27 @@
   }
 
   /**
+   * カウントの拍の数を、最小と最大の間に収める関数
+   * @param {number} value - カウントの拍の数
+   * @returns {number} 最小と最大の間に収めたカウントの拍の数
+   */
+  function clampCountIn(value) {
+    return Math.min(COUNT_IN_MAX, Math.max(COUNT_IN_MIN, value));
+  }
+
+  /**
+   * カウントの拍の数を変える関数
+   * 設定の「−」「＋」ボタンを押したときに呼ばれる。変えた値はブラウザに保存する。
+   * @param {number} amount - 変える量（減らすときはマイナス、増やすときはプラス）
+   */
+  function changeCountIn(amount) {
+    countInBeats = clampCountIn(countInBeats + amount);
+
+    // 次に開いたときも同じ値で始められるように、ブラウザに保存する
+    saveCountInBeats(countInBeats);
+  }
+
+  /**
    * 「通し」の練習を始める関数
    * 「始める」ボタンを押したときに呼ばれる。
    * まずカウントを鳴らし、そのあと1拍ごとに目標の音を進める。
@@ -108,12 +151,12 @@
    */
   function runBeat(beat) {
     // 楽譜の何番目の音にあたるか（カウントの間はマイナスになる）
-    const noteIndex = beat - COUNT_IN_BEATS;
+    const noteIndex = beat - countInBeats;
 
     if (noteIndex < 0) {
       // カウント中：残りの拍の数を表示して、メトロノームを鳴らす
       phase = "countIn";
-      countInRemaining = COUNT_IN_BEATS - beat;
+      countInRemaining = countInBeats - beat;
       currentIndex = null;
       playClick();
     } else if (noteIndex < notes.length) {
@@ -179,7 +222,7 @@
     <p class="status-main finished">おわり</p>
   {:else}
     <!-- 始める前：やり方を案内する -->
-    <p class="status-caption">「始める」を押すと、カウントが{COUNT_IN_BEATS}拍鳴ります</p>
+    <p class="status-caption">「始める」を押すと、カウントが{countInBeats}拍鳴ります</p>
     <p class="status-main idle">♩＝{tempo}</p>
   {/if}
 </div>
@@ -205,6 +248,23 @@
     </button>
   {/if}
 </div>
+
+<!-- 設定：ふだんは閉じておき、「設定」を押すと開く -->
+<details class="settings">
+  <summary>設定</summary>
+
+  <!-- カウントの拍の数（動いている最中は変えられない） -->
+  <div class="setting-row">
+    <span class="setting-label">カウントの拍の数</span>
+    <span class="setting-value">{countInBeats}</span>
+
+    <!-- 減らすボタン（動いている最中と、これ以上減らせないときは押せない） -->
+    <button class="tempo-button" aria-label="カウントの拍の数を減らす" disabled={isRunning || countInBeats <= COUNT_IN_MIN} onclick={() => changeCountIn(-1)}> − </button>
+
+    <!-- 増やすボタン（動いている最中と、これ以上増やせないときは押せない） -->
+    <button class="tempo-button" aria-label="カウントの拍の数を増やす" disabled={isRunning || countInBeats >= COUNT_IN_MAX} onclick={() => changeCountIn(1)}> ＋ </button>
+  </div>
+</details>
 
 <style>
   /* 今の状態の表示のエリア：中央に寄せる */
@@ -292,6 +352,40 @@
     flex: 1;
     color: white;
     border: none;
+  }
+
+  /* 設定のエリア */
+  .settings {
+    margin-top: 16px;
+    font-size: 0.9rem;
+    color: #616161;
+  }
+
+  /* 「設定」の文字：押せることが分かるように、カーソルを指の形にする */
+  .settings summary {
+    cursor: pointer;
+  }
+
+  /* 設定の1行：名前・値・ボタンを横に並べる */
+  .setting-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  /* 設定の名前：残りの横幅を使って、値とボタンを右に寄せる */
+  .setting-label {
+    flex: 1;
+  }
+
+  /* 設定の値（拍の数）：けた数が変わっても横幅が変わらないようにする */
+  .setting-value {
+    min-width: 2em;
+    text-align: right;
+    font-size: 1rem;
+    color: #212121;
+    font-variant-numeric: tabular-nums;
   }
 
   /* 「始める」ボタン（青） */
