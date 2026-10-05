@@ -28,6 +28,9 @@
   // 五線譜を描く部品を読み込む
   import Staff from "#lib/Staff.svelte";
 
+  // ズレを表示するメーターの部品を読み込む
+  import Meter from "#lib/Meter.svelte";
+
   // ===== 判定に関する設定値 =====
 
   // 「OK」とする範囲（セント）。目標の音とのズレがこの範囲に入っていれば OK
@@ -273,6 +276,11 @@
 
     <!-- 判定の表示（マイクで聴いているときだけ表示する） -->
     {#if isListening}
+      <!-- メーター（ズレ、OK の範囲、表示する範囲を渡して、針で表示する） -->
+      <div class="meter-area">
+        <Meter {cents} tolerance={TOLERANCE} range={METER_RANGE} />
+      </div>
+
       <!-- 判定の結果によって、文字の色を変える（OK は緑、低いは青、高いは赤） -->
       <div class="judgement-area {judgement}">
         {#if judgement === "none"}
@@ -417,9 +425,14 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* メーターのエリア：目標の音の表示から少し離す */
+  .meter-area {
+    margin-top: 12px;
+  }
+
   /* 判定の表示のエリア：中央に寄せる */
   .judgement-area {
-    margin-top: 12px;
+    margin-top: 4px;
     text-align: center;
     /* 文字の色は、判定の結果ごとに下で決める。ここは、音が出ていないときのグレー */
     color: #757575;
