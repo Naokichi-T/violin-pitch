@@ -24,8 +24,8 @@
   // マイクで音の高さを調べはじめる関数と、止める関数を読み込む
   import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
 
-  // メトロノームの音を鳴らす関数を読み込む
-  import { playClick } from "#lib/audio.js";
+  // メトロノームの音を鳴らす関数と、合図の音を鳴らす関数を読み込む
+  import { playClick, playChime } from "#lib/audio.js";
 
   // カウントの拍の数を、ブラウザに保存する関数と読み込む関数を読み込む
   import { loadCountInBeats, saveCountInBeats } from "#lib/settings.js";
@@ -71,6 +71,10 @@
     low: "低い",
     none: "音なし",
   };
+
+  // 最後まで弾けたときに鳴らす、終わりの合図の音の高さ（Hz）。順番に続けて鳴らす
+  // 1768 は ラ6（基準音 442Hz の2オクターブ上）、2652 はその5度上（1.5倍）の ミ7
+  const FINISH_CHIME_FREQUENCIES = [1768, 2652];
 
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
@@ -297,6 +301,9 @@
     } else {
       // 最後の音の拍が終わった：マイクを止めて、終わりにする
       stopMicrophone();
+
+      // 終わりの合図の音を鳴らす（判定はもう終わっているので、点数には影響しない）
+      playChime(FINISH_CHIME_FREQUENCIES);
       timer = null;
       phase = "finished";
       currentIndex = null;
