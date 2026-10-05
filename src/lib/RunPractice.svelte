@@ -2,7 +2,7 @@
   // 「通し」モードの練習の部品
   // メトロノームのテンポに合わせて、目標の音が1拍ごとに次へ進む。
   // 弾いた音は、1拍ごとに「OK・高い・低い・音なし」のどれかに判定して記録する。
-  // 最後まで進むと、全体の点数を表示する。
+  // 最後まで進むと、全体の点数を表示する。「くり返す」ときは、短いカウントのあと、もう一度最初から進む。
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -40,7 +40,11 @@
   // temperamentId：音律の id（'just'・'pythagorean'・'equal'）
   // tolerance    ：OK とする範囲（セント）。±この値までを OK にする
   // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか（true：する）
-  let { notes, currentKey, initialTempo, temperamentId, tolerance, allowOpenString } = $props();
+  // repeatEnabled  ：最後の音まで進んだら、最初の音に戻ってくり返すかどうか（true：くり返す）
+  // ontempochange  ：テンポを変えたときに呼ぶ関数。新しいテンポを渡す
+  //                  （練習ページがテンポを覚えておき、この部品を作り直したときに同じテンポで始めるため）
+  // ontempochange は、渡されなかったときのための初期値（何もしない関数）を決めておく
+  let { notes, currentKey, initialTempo, temperamentId, tolerance, allowOpenString, repeatEnabled, ontempochange = () => {} } = $props();
 
   // ===== テンポとカウントに関する設定値 =====
 
@@ -54,6 +58,10 @@
   const COUNT_IN_MIN = 5;
   const COUNT_IN_MAX = 30;
   const COUNT_IN_DEFAULT = 10;
+
+  // くり返しの2回目からの、カウントの拍の数
+  // 弓をもう構えているので、最初のカウントより短くする
+  const REPEAT_COUNT_IN_BEATS = 4;
 
   // ===== 判定に関する設定値 =====
 
@@ -102,10 +110,14 @@
   let currentIndex = $state(null);
 
   // 1音ごとの判定の結果を、楽譜の順に入れておく配列
-  // 1つの結果は { status: 結果の種類, cents: 目標の音とのずれ（セント） } の形
-  //   status：'ok'（OK）・'high'（高い）・'low'（低い）・'none'（音なし）
-  //   cents ：音なしのときは null
+  // 1つの結果は { status: 結果の種類, cents: 目標の音とのずれ（セント）, openString: 開放弦と比べたか } の形
+  //   status    ：'ok'（OK）・'high'（高い）・'low'（低い）・'none'（音なし）
+  //   cents     ：音なしのときは null
+  //   openString：開放弦の高さと比べた結果のとき true（音なしのときは入っていない）
   let results = $state([]);
+
+  // くり返しの、回ごとの点数を順に入れておく配列（例：[86, 91] は、1回目86点・2回目91点）
+  let roundScores = $state([]);
 
   // 五線譜でタップして選んだ音が何番目か（0から始まる）。選んでいないときは null
   // 選んだ音の結果の札を、目立つように表示するために使う
@@ -119,8 +131,11 @@
   // 次の拍のための予約の番号（やめるときに、予約を取り消すために使う）
   let timer = null;
 
-  // 始めた時刻（ページを開いてからのミリ秒）
+  // 今の回を始めた時刻（ページを開いてからのミリ秒）。くり返しで次の回に入るたびに、入れ直す
   let startTime = 0;
+
+  // 今の回の、カウントの拍の数（1回目は設定の拍の数、2回目からは短いカウント）
+  let roundCountInBeats = 0;
 
   // 1拍の長さ（ミリ秒）。始めるときに、そのときのテンポから計算する
   let beatMilliseconds = 0;
@@ -182,6 +197,9 @@
    */
   function changeTempo(amount) {
     tempo = clampTempo(tempo + amount);
+
+    // 新しいテンポを、練習ページに伝える（区間やモードを変えても、同じテンポで始められるようにするため）
+    ontempochange(tempo);
   }
 
   /**
@@ -232,9 +250,10 @@
    * マイクを開始してからカウントを鳴らし、そのあと1拍ごとに目標の音を進める。
    */
   async function start() {
-    // 前回のエラーメッセージと、前回の結果を消す。音を選んでいたら、それもやめる
+    // 前回のエラーメッセージ・前回の結果・回ごとの点数を消す。音を選んでいたら、それもやめる
     errorMessage = "";
     results = [];
+    roundScores = [];
     selectedIndex = null;
 
     // マイクの準備中にする（この間は「やめる」ボタンが出る）
@@ -261,6 +280,9 @@
     // 1拍の長さ（ミリ秒）を計算する。テンポ60なら1000、テンポ120なら500
     beatMilliseconds = 60000 / tempo;
 
+    // 1回目のカウントは、設定の拍の数にする
+    roundCountInBeats = countInBeats;
+
     // 始めた時刻を覚えておく（それぞれの拍の時刻を計算するために使う）
     // performance.now() は、ページを開いてからの時間をミリ秒で返す
     startTime = performance.now();
@@ -271,12 +293,12 @@
 
   /**
    * 1拍ぶんの処理をして、次の拍を予約する関数
-   * 1拍ごとに呼ばれる。カウント → 楽譜の音を順に → 終わり、と進む。
-   * @param {number} beat - 始めてから何拍目か（0から始まる。カウントの拍も含めて数える）
+   * 1拍ごとに呼ばれる。カウント → 楽譜の音を順に → 終わり（くり返すときは次の回のカウント）、と進む。
+   * @param {number} beat - 今の回を始めてから何拍目か（0から始まる。カウントの拍も含めて数える）
    */
   function runBeat(beat) {
     // 楽譜の何番目の音にあたるか（カウントの間はマイナスになる）
-    const noteIndex = beat - countInBeats;
+    const noteIndex = beat - roundCountInBeats;
 
     // 1つ前の拍が楽譜の音だったら、その音の判定をして結果を記録する
     if (noteIndex >= 1) {
@@ -290,20 +312,47 @@
     if (noteIndex < 0) {
       // カウント中：残りの拍の数を表示して、メトロノームを鳴らす
       phase = "countIn";
-      countInRemaining = countInBeats - beat;
+      countInRemaining = roundCountInBeats - beat;
       currentIndex = null;
       playClick();
     } else if (noteIndex < notes.length) {
+      // 1音目が始まるとき：前の回の結果を消す（くり返しの2回目から。1回目はもともと空）
+      // 前の回の結果は、カウントの間に見直せるように、ここまで残してある
+      if (noteIndex === 0) {
+        results = [];
+        selectedIndex = null;
+      }
+
       // 演奏中：この拍の音を目標にして、メトロノームを鳴らす
       phase = "playing";
       currentIndex = noteIndex;
       playClick();
     } else {
-      // 最後の音の拍が終わった：マイクを止めて、終わりにする
-      stopMicrophone();
+      // 最後の音の拍が終わった
 
       // 終わりの合図の音を鳴らす（判定はもう終わっているので、点数には影響しない）
       playChime(FINISH_CHIME_FREQUENCIES);
+
+      // くり返しているとき（または、途中でくり返しをやめたとき）は、この回の点数を記録する
+      if (repeatEnabled || roundScores.length > 0) {
+        roundScores.push(totalScore);
+      }
+
+      // くり返すとき：メトロノームを止めずに、短いカウントから次の回を始める
+      if (repeatEnabled) {
+        // 今の拍の時刻を、次の回を始めた時刻にする
+        startTime = startTime + beat * beatMilliseconds;
+
+        // 2回目からは、短いカウントにする
+        roundCountInBeats = REPEAT_COUNT_IN_BEATS;
+
+        // 次の回の最初の拍（カウントの1拍目）から始める
+        runBeat(0);
+        return;
+      }
+
+      // くり返さないとき：マイクを止めて、終わりにする
+      stopMicrophone();
       timer = null;
       phase = "finished";
       currentIndex = null;
@@ -463,7 +512,13 @@
     <p class="status-main count">{countInRemaining}</p>
   {:else if phase === "playing"}
     <!-- 演奏中：今の目標の音を大きく表示する -->
-    <p class="status-caption">目標の音（{currentIndex + 1} / {notes.length}）</p>
+    <p class="status-caption">
+      目標の音（{currentIndex + 1} / {notes.length}）
+      <!-- くり返すときは、今が何回目かも表示する（記録した点数の数 ＋ 1 が、今の回） -->
+      {#if repeatEnabled}
+        ・くり返し {roundScores.length + 1}回目
+      {/if}
+    </p>
     <p class="status-main">{noteToText(notes[currentIndex])}</p>
   {:else if phase === "finished"}
     <!-- 最後まで進んだ：全体の点数と、結果の種類ごとの数を表示する -->
@@ -501,6 +556,16 @@
         <!-- この音の点数 -->
         <span class="result-note">{centsToPoints(result.cents)}点</span>
       </li>
+    {/each}
+  </ul>
+{/if}
+
+<!-- くり返しの、回ごとの点数：1回以上記録があるときだけ表示する -->
+{#if roundScores.length > 0}
+  <ul class="round-list">
+    <!-- 点数を1つずつ取り出して表示する（index は 0 から始まるので、1を足して「何回目」にする） -->
+    {#each roundScores as score, index}
+      <li class="round">{index + 1}回目 <strong>{score}点</strong></li>
     {/each}
   </ul>
 {/if}
@@ -665,6 +730,30 @@
   .result.none.selected {
     background-color: #757575;
     border-color: #757575;
+  }
+
+  /* くり返しの、回ごとの点数の一覧：横に並べて、入りきらないときは折り返す */
+  .round-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin: 8px 0 0 0;
+    padding: 0;
+    /* リストの先頭の「・」を消す */
+    list-style: none;
+  }
+
+  /* 回ごとの点数1つぶん */
+  .round {
+    font-size: 0.9rem;
+    color: #616161;
+    /* 数字の幅をそろえる */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 点数の数字：緑の太字にする */
+  .round strong {
+    color: #2e7d32;
   }
 
   /* エラーメッセージ */

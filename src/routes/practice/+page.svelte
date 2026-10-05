@@ -347,8 +347,10 @@
           <!-- 「じっくり」モード：練習する音・調・音律・OK の範囲・開放弦を OK にするかどうか・くり返すかどうかを渡す -->
           <StepPractice notes={practiceNotes} {currentKey} {temperamentId} {tolerance} {allowOpenString} {repeatEnabled} />
         {:else}
-          <!-- 「通し」モード：練習する音・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうかを渡す -->
-          <RunPractice notes={practiceNotes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} {allowOpenString} />
+          <!-- 「通し」モード：練習する音・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうか・くり返すかどうかを渡す -->
+          <!-- ontempochange：「通し」の中でテンポを変えたら、このページの tempo も同じ値にする -->
+          <!-- （区間やモードを変えて部品を作り直しても、変えたテンポのまま始められるようにするため） -->
+          <RunPractice notes={practiceNotes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} {allowOpenString} {repeatEnabled} ontempochange={(value) => (tempo = value)} />
         {/if}
       {/key}
     {/if}
