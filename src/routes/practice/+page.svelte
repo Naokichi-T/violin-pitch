@@ -12,9 +12,12 @@
   // 音律のデータと、周波数や平均律からのズレを計算する関数を読み込む
   import { DEFAULT_TEMPERAMENT_ID, getTemperament, getFrequency, getCentsFromEqual } from "#lib/tuning.js";
 
-  // 保存された音律・作業中の楽譜・合図の音の設定を、ブラウザから読み込む関数と、
-  // 合図の音の設定をブラウザに保存する関数を読み込む
-  import { loadTemperamentId, loadCurrentScore, loadChimeEnabled, saveChimeEnabled } from "#lib/settings.js";
+  // 保存された音律・作業中の楽譜・合図の音の設定・判定のレベルを、ブラウザから読み込む関数と、
+  // 合図の音の設定・判定のレベルを、ブラウザに保存する関数を読み込む
+  import { loadTemperamentId, loadCurrentScore, loadChimeEnabled, saveChimeEnabled, loadLevelId, saveLevelId } from "#lib/settings.js";
+
+  // 判定のレベルの一覧と、レベルのデータを探す関数を読み込む
+  import { LEVELS, DEFAULT_LEVEL_ID, getLevel } from "#lib/level.js";
 
   // 指定した周波数の音を鳴らす関数、鳴っている音を止める関数、合図の音を鳴らす関数を読み込む
   import { playTone, stopTone, playChime } from "#lib/audio.js";
@@ -33,10 +36,6 @@
   import Meter from "#lib/Meter.svelte";
 
   // ===== 判定に関する設定値 =====
-
-  // 「OK」とする範囲（セント）。目標の音とのズレがこの範囲に入っていれば OK
-  // 今はノーマルの値だけ。あとで、ノーマルとイージーを切り替えられるようにする
-  const TOLERANCE = 10;
 
   // メーターに表示する範囲（セント）。ズレがこれを超えたら「もっと高い」「もっと低い」と表示する
   const METER_RANGE = 50;
@@ -88,6 +87,14 @@
   // 音律のデータ（名前を表示するために使う）
   let currentTemperament = $derived(getTemperament(temperamentId));
 
+  // 選択中の判定のレベルの id（'normal'：ノーマル、'easy'：イージー）
+  // 最初は決まった設定にしておき、画面に表示された後で、保存された設定に入れ替える
+  let levelId = $state(DEFAULT_LEVEL_ID);
+
+  // 「OK」とする範囲（セント）。目標の音とのズレがこの範囲に入っていれば OK
+  // 選択中のレベルによって変わる（ノーマルは 10、イージーは 25）
+  let tolerance = $derived(getLevel(levelId).tolerance);
+
   // マイクで音を聴いているかどうか（true：聴いている、false：止まっている）
   let isListening = $state(false);
 
@@ -133,10 +140,11 @@
   // 今の目標の音の、選択中の音律での周波数（Hz）。目標の音がないときは null
   let targetFrequency = $derived(targetNote !== null ? getFrequency(targetNote, currentKey, temperamentId) : null);
 
-  // このページが画面に表示された直後に、保存された音律と楽譜をブラウザから読み込む
+  // このページが画面に表示された直後に、保存された音律・判定のレベル・楽譜をブラウザから読み込む
   // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
   onMount(() => {
     temperamentId = loadTemperamentId();
+    levelId = loadLevelId();
 
     // 作業中の楽譜を読み込む（保存されていないときは null が入り、何もしない）
     const savedScore = loadCurrentScore();
@@ -193,16 +201,33 @@
     if (centsValue === null) {
       // 音が出ていない
       return "none";
-    } else if (centsValue < -TOLERANCE) {
+    } else if (centsValue < -tolerance) {
       // OK の範囲より下
       return "low";
-    } else if (centsValue > TOLERANCE) {
+    } else if (centsValue > tolerance) {
       // OK の範囲より上
       return "high";
     } else {
       // OK の範囲の中
       return "ok";
     }
+  }
+
+  /**
+   * 判定のレベルを切り替える関数
+   * 「ノーマル」「イージー」のボタンを押したときに呼ばれる。
+   * 選んだレベルに切り替えて、次に開いたときのためにブラウザに保存する。
+   * @param {string} id - 選んだレベルの id（'normal'・'easy'）
+   */
+  function changeLevel(id) {
+    // 選んだレベルに切り替える（これで、OK の範囲と判定の結果も自動で計算し直される）
+    levelId = id;
+
+    // ブラウザに保存する
+    saveLevelId(id);
+
+    // OK の範囲が変わったので、数えていた時間を最初に戻す
+    resetHold();
   }
 
   /**
@@ -481,6 +506,19 @@
     <!-- 楽譜の調と音律（編集ページで決めたものを表示するだけで、ここでは変えられない） -->
     <p class="score-info">{getKeyLabel(currentKey)}・{currentTemperament.name}</p>
 
+    <!-- 判定のレベルの切り替え（ノーマル・イージー） -->
+    <div class="level-row">
+      <span class="level-caption">判定</span>
+
+      {#each LEVELS as level (level.id)}
+        <!-- 選択中のレベルには selected クラスを付けて色を変える -->
+        <!-- ボタンには、レベルの名前と、OK の範囲（±10 など）を表示する -->
+        <button class="level-button" class:selected={levelId === level.id} onclick={() => changeLevel(level.id)}>
+          {level.name}（±{level.tolerance}）
+        </button>
+      {/each}
+    </div>
+
     <!-- 五線譜（目標の音を、編集ページの「選択中」と同じ青で表示する） -->
     <!-- passed を渡して、通過した音符を緑で表示する -->
     <!-- 音符をタップすると、その音を目標にする -->
@@ -504,7 +542,7 @@
     {#if isListening}
       <!-- メーター（ズレ、OK の範囲、表示する範囲を渡して、針で表示する） -->
       <div class="meter-area">
-        <Meter {cents} tolerance={TOLERANCE} range={METER_RANGE} />
+        <Meter {cents} {tolerance} range={METER_RANGE} />
       </div>
 
       <!-- ゲージ：OK を保てている時間を、横に伸びる棒で表示する。いっぱいになると次の音へ進む -->
@@ -646,6 +684,37 @@
     margin: 0;
     font-size: 0.85rem;
     color: #616161;
+  }
+
+  /* 判定のレベルの切り替え：「判定」の文字と、2つのボタンを横に並べる */
+  .level-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  /* 「判定」の文字 */
+  .level-caption {
+    font-size: 0.85rem;
+    color: #616161;
+    flex-shrink: 0;
+  }
+
+  /* レベルのボタン（選択前）：白地に青い枠。ほかのボタンより小さくする */
+  button.level-button {
+    flex: 1;
+    padding: 6px 0;
+    font-size: 0.9rem;
+    color: #1976d2;
+    background-color: white;
+    border: 2px solid #1976d2;
+  }
+
+  /* レベルのボタン（選択中）：青く塗る */
+  button.level-button.selected {
+    color: white;
+    background-color: #1976d2;
   }
 
   /* 目標の音のエリア：中央に寄せる */

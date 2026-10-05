@@ -4,6 +4,9 @@ import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID } from "./tuning.js";
 // 音が登録できる音域に入っているかを調べる関数を読み込む（保存された楽譜の確認に使う）
 import { isInRange } from "./score.js";
 
+// 判定のレベルの一覧と、最初の設定を読み込む
+import { LEVELS, DEFAULT_LEVEL_ID } from "./level.js";
+
 // ===== ブラウザに設定を保存するための設定値 =====
 
 // 音律を保存するときの名前（localStorage の中で、この名前を付けて保存する）
@@ -18,6 +21,9 @@ const CURRENT_SCORE_STORAGE_KEY = "violin-pitch:current-score";
 
 // 「練習で音を通過したときに、合図の音を鳴らすかどうか」を保存するときの名前
 const CHIME_ENABLED_STORAGE_KEY = "violin-pitch:chime-enabled";
+
+// 判定のレベル（ノーマル・イージー）を保存するときの名前
+const LEVEL_STORAGE_KEY = "violin-pitch:level";
 
 /**
  * 最後に選んだ音律の id を、ブラウザから読み込む関数
@@ -206,6 +212,42 @@ export function saveChimeEnabled(enabled) {
   try {
     // true・false を、'true'・'false' という文字に直して保存する
     localStorage.setItem(CHIME_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (error) {
+    // 保存領域を使えないときは、保存をあきらめる（アプリはそのまま使える）
+  }
+}
+
+/**
+ * 最後に選んだ判定のレベルの id を、ブラウザから読み込む関数
+ * 保存されていないときや、読み込めないときは、最初の設定（DEFAULT_LEVEL_ID）を返す。
+ * ブラウザの中でだけ使える機能なので、ページが画面に表示された後に呼ぶこと。
+ * @returns {string} レベルの id（'normal'・'easy'）
+ */
+export function loadLevelId() {
+  try {
+    // 保存されている値を取り出す（保存されていないときは null が入る）
+    const saved = localStorage.getItem(LEVEL_STORAGE_KEY);
+
+    // 保存されていた値が、今のレベルの一覧にあるものかを確認する
+    const isValid = LEVELS.some((level) => level.id === saved);
+    if (isValid) {
+      return saved;
+    }
+  } catch (error) {
+    // 保存領域を使えないときは何もせず、下で最初の設定を返す
+  }
+
+  // 保存されていないとき、正しくない値のとき、読み込めなかったとき
+  return DEFAULT_LEVEL_ID;
+}
+
+/**
+ * 選んだ判定のレベルの id を、ブラウザに保存する関数
+ * @param {string} id - レベルの id（'normal'・'easy'）
+ */
+export function saveLevelId(id) {
+  try {
+    localStorage.setItem(LEVEL_STORAGE_KEY, id);
   } catch (error) {
     // 保存領域を使えないときは、保存をあきらめる（アプリはそのまま使える）
   }
