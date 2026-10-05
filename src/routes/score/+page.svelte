@@ -126,6 +126,33 @@
     stopPlayback();
   });
 
+  // 文字の一覧（横にスクロールする枠）の部品そのもの。スクロール位置を動かすために使う
+  // 画面に表示されるまでは null
+  let noteListElement = $state(null);
+
+  // 文字の一覧を、注目している音が見える位置まで自動で横にスクロールする
+  // $effect の中で使っている値（再生中の音、選択中の音、音の数）が変わるたびに、自動で実行される
+  $effect(() => {
+    // 注目する音を決める（再生中の音 → 選択中の音 → 最後の音 の順で優先する）
+    // ?? は「左側が null のときだけ右側を使う」という書き方
+    const index = playingIndex ?? selectedIndex ?? notes.length - 1;
+
+    // 枠がまだ画面にないときや、音が1つもないときは、何もしない
+    if (noteListElement === null || index < 0) {
+      return;
+    }
+
+    // 注目する音のボタンを取り出す（見つからないときは何もしない）
+    const item = noteListElement.children[index];
+    if (!item) {
+      return;
+    }
+
+    // そのボタンが枠の中央に来るように、横のスクロール位置を決める
+    // offsetLeft：枠の左端からボタンの左端までの距離、clientWidth：枠の見えている幅
+    noteListElement.scrollLeft = item.offsetLeft - noteListElement.clientWidth / 2 + item.offsetWidth / 2;
+  });
+
   /**
    * 音を鳴らすかどうかを切り替える関数
    * チェックボックスを切り替えたときに呼ばれる。
@@ -404,17 +431,17 @@
 </script>
 
 <main>
-  <!-- ホームへ戻るリンク -->
-  <a class="back-link" href="/">← ホーム</a>
+  <!-- 画面の上の行：ホームへ戻るリンクと、ページのタイトルを横に並べる -->
+  <div class="header-row">
+    <a class="back-link" href="/">← ホーム</a>
+    <h1>楽譜の編集</h1>
+  </div>
 
-  <h1>楽譜の編集</h1>
-
-  <!-- 調の選択 -->
-  <div class="key-area">
-    <label class="key-label" for="key-select">調</label>
-
+  <!-- 調と音律の選択：2つのメニューを横に並べる -->
+  <div class="select-row">
+    <!-- 調のメニュー。aria-label は、読み上げで操作する人のための、メニューの説明 -->
     <!-- bind:value を付けると、選んだ調の id が keyId に自動で入る -->
-    <select id="key-select" class="key-select" bind:value={keyId}>
+    <select class="key-select" aria-label="調" bind:value={keyId}>
       <!-- optgroup は、メニューの中の見出し付きのグループ -->
       <optgroup label="長調">
         {#each majorKeys as key (key.id)}
@@ -427,46 +454,47 @@
         {/each}
       </optgroup>
     </select>
-  </div>
 
-  <!-- 選択中の調の音階（どの音に♯・♭が付くかを確認するための表示） -->
-  <p class="scale">{scaleNames.join(" ")}</p>
-
-  <!-- 音律の選択（見た目は、調の選択と同じスタイルを使う） -->
-  <!-- style で上のすき間だけを足して、音階の表示と少し離す -->
-  <div class="key-area" style="margin-top: 12px">
-    <label class="key-label" for="temperament-select">音律</label>
-
+    <!-- 音律のメニュー -->
     <!-- value で今の音律をメニューに表示し、選び直されたら changeTemperament を呼ぶ -->
     <!-- event.currentTarget.value に、選ばれた音律の id が入っている -->
-    <select id="temperament-select" class="key-select" value={temperamentId} onchange={(event) => changeTemperament(event.currentTarget.value)}>
+    <select class="temperament-select" aria-label="音律" value={temperamentId} onchange={(event) => changeTemperament(event.currentTarget.value)}>
       {#each TEMPERAMENTS as temperament (temperament.id)}
         <option value={temperament.id}>{temperament.name}</option>
       {/each}
     </select>
   </div>
 
-  <!-- 選択中の音律の説明（見た目は、音階の表示と同じスタイルを使う） -->
-  <p class="scale">{currentTemperament.description}</p>
+  <!-- 選択中の調の音階（どの音に♯・♭が付くかを確認するための表示） -->
+  <p class="scale">{scaleNames.join(" ")}</p>
 
-  <!-- 音を入れたとき・選んだときに、音を鳴らすかどうかの切り替え -->
-  <!-- あまり切り替えない設定なので、目立たない小さなチェックボックスにしている -->
-  <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
-  <label class="sound-toggle">
-    <!-- checked で今の設定を表示し、切り替えられたら changeSoundEnabled を呼ぶ -->
-    <!-- event.currentTarget.checked に、チェックが入っているか（true・false）が入っている -->
-    <input type="checkbox" checked={soundEnabled} onchange={(event) => changeSoundEnabled(event.currentTarget.checked)} />
-    音を入れたとき・選んだときに音を鳴らす
-  </label>
+  <!-- あまり使わない設定：ふだんはたたんでおき、「設定」を押したときだけ開く -->
+  <!-- details と summary は、押すと開いたり閉じたりする部品を作るためのタグ -->
+  <details class="settings">
+    <summary>設定</summary>
+
+    <!-- 選択中の音律の説明 -->
+    <p class="settings-text">{currentTemperament.name}：{currentTemperament.description}</p>
+
+    <!-- 音を入れたとき・選んだときに、音を鳴らすかどうかの切り替え -->
+    <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
+    <label class="sound-toggle">
+      <!-- checked で今の設定を表示し、切り替えられたら changeSoundEnabled を呼ぶ -->
+      <!-- event.currentTarget.checked に、チェックが入っているか（true・false）が入っている -->
+      <input type="checkbox" checked={soundEnabled} onchange={(event) => changeSoundEnabled(event.currentTarget.checked)} />
+      音を入れたとき・選んだときに音を鳴らす
+    </label>
+  </details>
 
   <!-- 五線譜（登録した音の並びと、調号の数を渡して表示する） -->
   <!-- selectedIndex で選択中の音を、playingIndex で再生中の音を伝える -->
   <!-- 音符がタップされたら selectNote を呼んでもらう -->
   <Staff {notes} signature={currentKey.signature} {selectedIndex} {playingIndex} onselect={selectNote} />
 
-  <!-- 登録した音の一覧（五線譜の下に文字でも表示する。タップして音を選べる） -->
+  <!-- 登録した音の一覧（1行だけ表示して、はみ出した分は横にスクロールする。タップして音を選べる） -->
   <!-- こちらは調号に関係なく、実際に鳴る音をそのまま表示する -->
-  <div class="note-list">
+  <!-- bind:this を付けると、この部品そのものが noteListElement に入り、スクロール位置を動かせる -->
+  <div class="note-list" bind:this={noteListElement}>
     {#if notes.length === 0}
       <span class="empty">まだ音がありません</span>
     {:else}
@@ -480,23 +508,19 @@
     {/if}
   </div>
 
-  <!-- 登録した音の数 -->
-  <p class="note-count">（{notes.length}音）</p>
-
-  <!-- 選んだ音の、選択中の音律での周波数と、平均律からのズレ -->
+  <!-- 音の数と、選んだ音の周波数（選択中の音律での周波数と、平均律からのズレ） -->
   <p class="selected-info">
     {#if selectedIndex === null}
-      音を選ぶと、選択中の音律での周波数を表示します
+      全{notes.length}音。音を選ぶと周波数を表示します
     {:else}
       <!-- 選んだ音のデータを、短い名前で使えるようにしておく -->
       {@const selectedNote = notes[selectedIndex]}
-      選択中：{noteToText(selectedNote)}　{getFrequency(selectedNote, currentKey, temperamentId).toFixed(1)} Hz（平均律より
+      {noteToText(selectedNote)}　{getFrequency(selectedNote, currentKey, temperamentId).toFixed(1)} Hz（平均律より
       {formatCents(getCentsFromEqual(selectedNote, currentKey, temperamentId))} セント）
     {/if}
   </p>
 
   <!-- 再生（テンポの指定と、再生・停止のボタン） -->
-  <p class="label">再生</p>
   <div class="playback-row">
     <!-- 今のテンポ。♩＝60 は「四分音符を1分間に60回」という意味 -->
     <span class="tempo-text">♩＝{tempo}</span>
@@ -523,156 +547,203 @@
       </button>
     {/if}
   </div>
-
-  <!-- オクターブの選択 -->
-  <p class="label">オクターブ</p>
-  <div class="button-row">
-    {#each OCTAVES as octave (octave)}
-      <!-- 選択中のオクターブには selected クラスを付けて色を変える -->
-      <button class="choice" class:selected={selectedOctave === octave} onclick={() => (selectedOctave = octave)}>
-        {octave}
-      </button>
-    {/each}
-  </div>
-
-  <!-- 変化記号の選択（押すと次の1音にだけ付く。もう一度押すと解除） -->
-  <!-- 何も選んでいないときは、調号どおりの音になる -->
-  <p class="label">変化記号（次の1音だけ。選ばなければ調号どおり）</p>
-  <div class="button-row">
-    <button class="choice" class:selected={selectedAccidental === 1} onclick={() => toggleAccidental(1)}> ♯ </button>
-    <button class="choice" class:selected={selectedAccidental === -1} onclick={() => toggleAccidental(-1)}> ♭ </button>
-    <button class="choice" class:selected={selectedAccidental === 0} onclick={() => toggleAccidental(0)}> ♮ </button>
-  </div>
-
-  <!-- 選んだ音をどうするかの切り替え（音を選んでいるときだけ表示する） -->
-  {#if selectedIndex !== null}
-    <p class="label">選んだ音をどうするか</p>
-    <div class="button-row">
-      <!-- 選ばれているほうに selected クラスを付けて色を変える -->
-      <button class="choice" class:selected={editMode === "replace"} onclick={() => (editMode = "replace")}> 置き換え </button>
-      <button class="choice" class:selected={editMode === "insert"} onclick={() => (editMode = "insert")}> 前に挿入 </button>
-    </div>
-  {/if}
-
-  <!-- 音名ボタン（押すと、音が追加されるか、選んだ音が置き換わるか、選んだ音の前に入る） -->
-  <!-- 見出しで、今どの動きになるのかを案内する -->
-  <p class="label">
-    {#if selectedIndex === null}
-      音名（最後に追加します）
-    {:else if editMode === "replace"}
-      <!-- 最後に追加する動きではないことに気づきやすいように、案内の部分だけ赤字にする -->
-      音名<span class="replace-hint">（{selectedIndex + 1}番目の「{noteToText(notes[selectedIndex])}」を置き換えます）</span>
-    {:else}
-      音名<span class="replace-hint">（{selectedIndex + 1}番目の「{noteToText(notes[selectedIndex])}」の前に挿入します）</span>
-    {/if}
-  </p>
-  <div class="step-row">
-    {#each STEP_NAMES as stepName, step (step)}
-      <!-- 今の選択で音域の外になる音は、ボタンを押せなくする -->
-      <!-- ボタンの文字は、押したときに実際に追加される音にする（例：ニ長調のファは「ファ♯」） -->
-      <button class="step" disabled={!isInRange(createNote(step))} onclick={() => addNote(step)}>
-        {getStepButtonText(step)}
-      </button>
-    {/each}
-  </div>
-
-  <!-- 消すボタン（音が1つもないときは押せない） -->
-  <!-- 音を選んでいるかどうかで、ボタンの文字を切り替える -->
-  <button class="remove" disabled={notes.length === 0} onclick={removeNote}>
-    {#if selectedIndex === null}
-      最後の1音を消す
-    {:else}
-      選んだ音を消す
-    {/if}
-  </button>
 </main>
 
+<!-- 入力パネル：音を入れるためのボタンを、画面の下に固定して表示する -->
+<!-- 楽譜が長くなってスクロールしても、ボタンはいつも同じ場所にある -->
+<div class="input-panel">
+  <!-- パネルの中身（画面が広いときも、上の部分と同じ幅にそろえる） -->
+  <div class="input-panel-inner">
+    <!-- 1行目：オクターブと変化記号を横に並べる -->
+    <div class="option-row">
+      <!-- オクターブの選択 -->
+      <div class="option-group octave-group">
+        <span class="option-caption">オクターブ</span>
+        <div class="button-row">
+          {#each OCTAVES as octave (octave)}
+            <!-- 選択中のオクターブには selected クラスを付けて色を変える -->
+            <button class="choice" class:selected={selectedOctave === octave} onclick={() => (selectedOctave = octave)}>
+              {octave}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- 変化記号の選択（押すと次の1音にだけ付く。もう一度押すと解除） -->
+      <!-- 何も選んでいないときは、調号どおりの音になる -->
+      <div class="option-group accidental-group">
+        <span class="option-caption">変化記号（次の1音だけ）</span>
+        <div class="button-row">
+          <button class="choice" class:selected={selectedAccidental === 1} onclick={() => toggleAccidental(1)}> ♯ </button>
+          <button class="choice" class:selected={selectedAccidental === -1} onclick={() => toggleAccidental(-1)}> ♭ </button>
+          <button class="choice" class:selected={selectedAccidental === 0} onclick={() => toggleAccidental(0)}> ♮ </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2行目：音名ボタンを押すとどうなるかの案内 -->
+    <p class="input-hint">
+      {#if selectedIndex === null}
+        音名：最後に追加します
+      {:else if editMode === "replace"}
+        <!-- 最後に追加する動きではないことに気づきやすいように、赤字にする -->
+        <span class="replace-hint">音名：{selectedIndex + 1}番目の「{noteToText(notes[selectedIndex])}」を置き換えます</span>
+      {:else}
+        <span class="replace-hint">音名：{selectedIndex + 1}番目の「{noteToText(notes[selectedIndex])}」の前に挿入します</span>
+      {/if}
+    </p>
+
+    <!-- 3行目：音名ボタン（押すと、音が追加されるか、選んだ音が置き換わるか、選んだ音の前に入る） -->
+    <div class="step-row">
+      {#each STEP_NAMES as stepName, step (step)}
+        <!-- 今の選択で音域の外になる音は、ボタンを押せなくする -->
+        <!-- ボタンの文字は、押したときに実際に追加される音にする（例：ニ長調のファは「ファ♯」） -->
+        <button class="step" disabled={!isInRange(createNote(step))} onclick={() => addNote(step)}>
+          {getStepButtonText(step)}
+        </button>
+      {/each}
+    </div>
+
+    <!-- 4行目：選んだ音をどうするかの切り替えと、消すボタン -->
+    <!-- 音を選んでいないときも場所を確保しておき、パネルの高さが変わらないようにする -->
+    <div class="edit-row">
+      <!-- 置き換え・前に挿入の切り替え（音を選んでいないときは押せない） -->
+      <!-- 選ばれているほうに selected クラスを付けて色を変える -->
+      <button class="choice" class:selected={selectedIndex !== null && editMode === "replace"} disabled={selectedIndex === null} onclick={() => (editMode = "replace")}> 置き換え </button>
+      <button class="choice" class:selected={selectedIndex !== null && editMode === "insert"} disabled={selectedIndex === null} onclick={() => (editMode = "insert")}> 前に挿入 </button>
+
+      <!-- 消すボタン（音が1つもないときは押せない） -->
+      <!-- 音を選んでいるかどうかで、ボタンの文字を切り替える -->
+      <button class="remove" disabled={notes.length === 0} onclick={removeNote}>
+        {#if selectedIndex === null}
+          最後を消す
+        {:else}
+          選んだ音を消す
+        {/if}
+      </button>
+    </div>
+  </div>
+</div>
+
 <style>
-  /* 画面全体：スマホで見やすいように幅を制限して中央に寄せる */
+  /* 画面の上の部分（スクロールする部分）：スマホで見やすいように幅を制限して中央に寄せる */
   main {
     max-width: 480px;
     margin: 0 auto;
-    padding: 24px 16px;
+    /* 下の余白を大きく取っているのは、画面の下に固定した入力パネルに、最後の部分が隠れないようにするため */
+    padding: 12px 16px 230px 16px;
     font-family: sans-serif;
+  }
+
+  /* 画面の上の行：リンクとタイトルを横に並べる */
+  .header-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
   }
 
   /* ホームへ戻るリンク */
   .back-link {
-    display: inline-block;
-    margin-bottom: 16px;
     color: #1976d2;
+    font-size: 0.9rem;
     text-decoration: none;
   }
 
   /* タイトル */
   h1 {
-    font-size: 1.4rem;
-    margin: 0 0 24px 0;
+    font-size: 1.1rem;
+    margin: 0;
   }
 
-  /* 調の選択のエリア：「調」の文字とメニューを横に並べる */
-  .key-area {
+  /* 調と音律のメニューを横に並べる */
+  .select-row {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    gap: 8px;
   }
 
-  /* 「調」の文字 */
-  .key-label {
-    font-size: 0.9rem;
-    color: #424242;
-    flex-shrink: 0;
-  }
-
-  /* 調を選ぶメニュー：残りの横幅いっぱいに広げ、指で押しやすい大きさにする */
-  .key-select {
-    flex-grow: 1;
-    padding: 10px 8px;
-    font-size: 1rem;
+  /* メニュー共通：指で押しやすい大きさにする */
+  .key-select,
+  .temperament-select {
+    /* min-width: 0 を付けると、中の文字が長くても、決めた割合より広がらない */
+    min-width: 0;
+    padding: 8px 4px;
+    font-size: 0.95rem;
     border: 1px solid #bdbdbd;
     border-radius: 8px;
     background-color: white;
   }
 
+  /* 調のメニュー：名前が長いので、音律のメニューより広くする（横幅を 3：2 に分ける） */
+  .key-select {
+    flex: 3;
+  }
+
+  /* 音律のメニュー */
+  .temperament-select {
+    flex: 2;
+  }
+
   /* 選択中の調の音階：小さくグレーで表示する */
   .scale {
-    margin: 8px 0 0 0;
-    font-size: 0.9rem;
+    margin: 6px 0 0 0;
+    font-size: 0.85rem;
     color: #616161;
   }
 
-  /* 音を鳴らすかどうかのチェックボックス：小さく目立たないように表示する */
+  /* あまり使わない設定（ふだんはたたんである） */
+  .settings {
+    margin-top: 4px;
+    font-size: 0.85rem;
+    color: #616161;
+  }
+
+  /* 「設定」の文字（押すと開く部分） */
+  .settings summary {
+    cursor: pointer;
+  }
+
+  /* 設定の中の説明文 */
+  .settings-text {
+    margin: 6px 0 0 0;
+  }
+
+  /* 音を鳴らすかどうかのチェックボックス */
   .sound-toggle {
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-top: 12px;
-    font-size: 0.85rem;
-    color: #616161;
+    margin-top: 6px;
     cursor: pointer;
   }
 
-  /* 登録した音の一覧：枠で囲み、音を横に並べて端で折り返す */
+  /* 登録した音の一覧：1行だけ表示して、はみ出した分は横にスクロールする */
   .note-list {
+    /* 中のボタンの位置を、この枠を基準にして調べられるようにする（スクロール位置の計算に使う） */
+    position: relative;
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    min-height: 48px;
-    padding: 12px;
+    gap: 6px;
+    padding: 6px;
     border: 1px solid #bdbdbd;
     border-radius: 8px;
+    /* 横にはみ出した分をスクロールできるようにする */
+    overflow-x: auto;
   }
 
-  /* 音が1つもないときのメッセージ */
+  /* 音が1つもないときのメッセージ（一覧のボタンと同じ高さになるように、上下の余白をそろえる） */
   .empty {
+    padding: 6px 4px;
+    font-size: 0.95rem;
     color: #757575;
   }
 
-  /* 一覧の中の1音（選択前）：指で押しやすい大きさのボタンにする */
+  /* 一覧の中の1音（選択前） */
   /* 枠は透明にしておき、選択中だけ色を付ける（枠の有無で大きさが変わらないようにするため） */
   button.note-item {
-    padding: 10px 12px;
-    font-size: 1.1rem;
+    /* 横幅が足りなくてもボタンを縮めない（縮めずに、横スクロールさせる） */
+    flex-shrink: 0;
+    padding: 6px 8px;
+    font-size: 0.95rem;
     color: #212121;
     background-color: #e3f2fd;
     border: 2px solid transparent;
@@ -694,34 +765,13 @@
     border-color: #e65100;
   }
 
-  /* 登録した音の数 */
-  .note-count {
-    margin: 4px 0 0 0;
-    font-size: 0.9rem;
-    color: #757575;
-    text-align: right;
-  }
-
-  /* 選んだ音の周波数の表示 */
+  /* 音の数と、選んだ音の周波数の表示 */
   .selected-info {
-    margin: 8px 0 0 0;
-    font-size: 0.9rem;
+    margin: 6px 0 0 0;
+    font-size: 0.85rem;
     color: #424242;
     /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
     font-variant-numeric: tabular-nums;
-  }
-
-  /* 各ボタンの上に付ける見出し */
-  .label {
-    margin: 20px 0 8px 0;
-    font-size: 0.9rem;
-    color: #424242;
-  }
-
-  /* 「〇番目の音を置き換えます」の案内：赤い太字にして目立たせる */
-  .replace-hint {
-    color: #c62828;
-    font-weight: bold;
   }
 
   /* 再生のエリア：テンポの表示・テンポのボタン・再生ボタンを横に並べる */
@@ -729,20 +779,31 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-top: 10px;
   }
 
   /* テンポの表示（♩＝60） */
   .tempo-text {
     /* テンポが3けたになっても横幅が変わらないように、幅を決めておく */
     min-width: 4.5em;
-    font-size: 1.1rem;
+    font-size: 1rem;
     /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
     font-variant-numeric: tabular-nums;
   }
 
-  /* テンポの「−」「＋」ボタン：小さな正方形に近い形にする */
+  /* 再生の行のボタン共通：高さを数値で決めて、3つのボタンの高さをそろえる */
+  /* （文字の高さに任せると、「−」と「＋」でフォントが違うときに、ボタンの高さがずれるため） */
+  .playback-row button {
+    height: 44px;
+    /* 高さを決めたので、上下の余白はなくす */
+    padding: 0;
+    /* 文字の行の高さを文字の大きさと同じにして、文字による高さの違いをなくす */
+    line-height: 1;
+  }
+
+  /* テンポの「−」「＋」ボタン：正方形にする */
   button.tempo-button {
-    width: 48px;
+    width: 44px;
     flex-shrink: 0;
     color: #1976d2;
     background-color: white;
@@ -766,10 +827,81 @@
     background-color: #c62828;
   }
 
-  /* オクターブと変化記号のボタンを横に並べる */
+  /* 入力パネル：画面の下に固定する */
+  .input-panel {
+    /* position: fixed を付けると、スクロールしても画面の同じ場所に表示され続ける */
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: white;
+    border-top: 1px solid #bdbdbd;
+    /* 上に薄い影を付けて、楽譜の上に重なっていることが分かるようにする */
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+    font-family: sans-serif;
+  }
+
+  /* 入力パネルの中身：上の部分と同じ幅にそろえて、中央に寄せる */
+  .input-panel-inner {
+    max-width: 480px;
+    margin: 0 auto;
+    /* 下の余白には、スマホの画面の下にある操作用のすき間（ホームバーなど）の分を足す */
+    padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)) 16px;
+  }
+
+  /* オクターブと変化記号を横に並べる */
+  .option-row {
+    display: flex;
+    gap: 12px;
+  }
+
+  /* オクターブ、変化記号それぞれのまとまり：小さな見出しとボタンを縦に並べる */
+  .option-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    /* min-width: 0 を付けると、中の文字が長くても、決めた割合より広がらない */
+    min-width: 0;
+  }
+
+  /* オクターブはボタンが4つ、変化記号は3つなので、横幅を 4：3 に分ける */
+  .octave-group {
+    flex: 4;
+  }
+
+  .accidental-group {
+    flex: 3;
+  }
+
+  /* オクターブ、変化記号の小さな見出し */
+  .option-caption {
+    font-size: 0.7rem;
+    color: #616161;
+    /* 幅が足りないときは、折り返さずに1行で表示する */
+    white-space: nowrap;
+  }
+
+  /* ボタンを横に並べる（オクターブ、変化記号で使う） */
   .button-row {
     display: flex;
-    gap: 8px;
+    gap: 4px;
+  }
+
+  /* 音名ボタンを押すとどうなるかの案内 */
+  .input-hint {
+    margin: 6px 0 4px 0;
+    font-size: 0.8rem;
+    color: #424242;
+    /* 長くなっても折り返さず、はみ出した分は「…」で省略する（パネルの高さが変わらないようにするため） */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 「〇番目の音を置き換えます」の案内：赤い太字にして目立たせる */
+  .replace-hint {
+    color: #c62828;
+    font-weight: bold;
   }
 
   /* 音名ボタンを7つ、同じ幅で横に並べる */
@@ -779,10 +911,17 @@
     gap: 4px;
   }
 
-  /* ボタン共通：指で押しやすい大きさにする */
+  /* 置き換え・前に挿入・消すのボタンを横に並べる */
+  .edit-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  /* ボタン共通：縦を短くしつつ、指で押せる大きさは保つ */
   button {
-    padding: 14px 0;
-    font-size: 1.1rem;
+    padding: 10px 0;
+    font-size: 1rem;
     border-radius: 8px;
     cursor: pointer;
   }
@@ -793,7 +932,7 @@
     cursor: not-allowed;
   }
 
-  /* オクターブと変化記号のボタン（選択前）：白地に青い枠 */
+  /* 切り替えのボタン（選択前）：白地に青い枠 */
   button.choice {
     flex: 1;
     color: #1976d2;
@@ -801,14 +940,15 @@
     border: 2px solid #1976d2;
   }
 
-  /* オクターブと変化記号のボタン（選択中）：青く塗る */
+  /* 切り替えのボタン（選択中）：青く塗る */
   button.choice.selected {
     color: white;
     background-color: #1976d2;
   }
 
-  /* 音名ボタン：緑 */
+  /* 音名ボタン：緑。一番よく押すので、ほかのボタンより少し縦を長くする */
   button.step {
+    padding: 12px 0;
     color: white;
     background-color: #2e7d32;
     border: none;
@@ -818,10 +958,14 @@
     white-space: nowrap;
   }
 
-  /* 「消す」ボタン：赤。横幅いっぱいに表示する */
+  /* 置き換え・前に挿入・消すのボタンは、文字が長いので少し小さい字にする */
+  .edit-row button {
+    font-size: 0.9rem;
+  }
+
+  /* 「消す」ボタン：赤 */
   button.remove {
-    width: 100%;
-    margin-top: 24px;
+    flex: 1.2;
     color: white;
     background-color: #c62828;
     border: none;
