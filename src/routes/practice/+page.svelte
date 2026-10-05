@@ -61,6 +61,9 @@
   // 最初は「する」にしておき、画面に表示された後で、保存された設定に入れ替える
   let openStringEnabled = $state(true);
 
+  // 開放弦の設定の説明を表示しているかどうか（true：表示している）。「？」ボタンで切り替える
+  let showsOpenStringHelp = $state(false);
+
   // 調のデータ
   // $derived を付けると、keyId が変わるたびに自動で探し直される
   let currentKey = $derived(getKey(keyId));
@@ -176,12 +179,29 @@
 
     <!-- 開放弦の設定：純正律のときだけ表示する -->
     {#if showsOpenStringSetting}
-      <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
-      <label class="open-string-row">
-        <!-- event.currentTarget.checked は、押したあとにチェックが入っているかどうか -->
-        <input type="checkbox" checked={openStringEnabled} onchange={(event) => changeOpenStringEnabled(event.currentTarget.checked)} />
-        開放弦の高さで弾いた音もOKにする（ソ3・レ4・ラ4・ミ5）
-      </label>
+      <!-- チェックボックスと「？」ボタンを横に並べる -->
+      <div class="open-string-row">
+        <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
+        <label class="open-string-label">
+          <!-- event.currentTarget.checked は、押したあとにチェックが入っているかどうか -->
+          <input type="checkbox" checked={openStringEnabled} onchange={(event) => changeOpenStringEnabled(event.currentTarget.checked)} />
+          開放弦の高さで弾いた音もOKにする（ソ3・レ4・ラ4・ミ5）
+        </label>
+
+        <!-- 「？」ボタン：押すたびに、説明を表示する・隠すを切り替える -->
+        <!-- label の外に置いているのは、中に置くと、押したときにチェックまで切り替わってしまうため -->
+        <!-- aria-label と aria-expanded は、読み上げで操作する人のための設定（ボタンの説明と、開いているかどうか） -->
+        <button class="help-button" aria-label="開放弦の設定の説明" aria-expanded={showsOpenStringHelp} onclick={() => (showsOpenStringHelp = !showsOpenStringHelp)}> ？ </button>
+      </div>
+
+      <!-- 説明：「？」ボタンを押して、表示にしているときだけ出す -->
+      {#if showsOpenStringHelp}
+        <p class="help-text">
+          開放弦（指で押さえない弦）は、調弦で高さが決まっていて、弾きながら変えられません。<br />
+          純正律では、調によって、ソ3・レ4・ラ4・ミ5 の「正しい高さ」が開放弦の高さと少し違うことがあります（最大で約22セント）。<br />
+          チェックを入れると、この4つの音は、開放弦の高さで弾いても正解になります。隣の弦で純正律の高さで弾いても、もちろん正解です。
+        </p>
+      {/if}
     {/if}
 
     <!-- 選択中のモードの練習の部品を表示する -->
@@ -328,15 +348,50 @@
     background-color: #1976d2;
   }
 
-  /* 開放弦の設定：チェックボックスと文字を横に並べ、小さくグレーで表示する */
+  /* 開放弦の設定の行：チェックボックスの部分と「？」ボタンを横に並べる */
   .open-string-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     margin-top: 8px;
+  }
+
+  /* チェックボックスと文字：横に並べ、小さくグレーで表示する */
+  .open-string-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 0.85rem;
     color: #616161;
     cursor: pointer;
+  }
+
+  /* 「？」ボタン：小さな丸いボタンにする */
+  button.help-button {
+    /* 横幅が足りないときも、つぶれて楕円にならないようにする */
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    font-size: 0.85rem;
+    font-weight: bold;
+    line-height: 1;
+    color: #1976d2;
+    background-color: white;
+    border: 2px solid #1976d2;
+    /* 50% にすると、正方形が丸になる */
+    border-radius: 50%;
+  }
+
+  /* 説明の文章：薄い青の地に、小さめの文字で表示する */
+  .help-text {
+    margin: 6px 0 0 0;
+    padding: 8px 10px;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: #424242;
+    background-color: #e3f2fd;
+    border-radius: 8px;
   }
 
   /* 編集ページへのリンク：小さく、右に寄せて表示する */
