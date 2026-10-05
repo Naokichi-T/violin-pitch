@@ -243,6 +243,15 @@
   });
 </script>
 
+<!-- svelte:head の中に書いたものは、ページの「head」（画面には出ない、ページについての情報を書く場所）に入る -->
+<svelte:head>
+  <!-- title：ブラウザのタブに出る -->
+  <title>チューナー｜バイオリン音程チェック</title>
+
+  <!-- このページは検索結果に載せない（ホームから進んでもらう形にするため） -->
+  <meta name="robots" content="noindex" />
+</svelte:head>
+
 <main>
   <!-- ホームへ戻るリンク -->
   <a class="back-link" href="/">← ホーム</a>

@@ -322,6 +322,15 @@
   }
 </script>
 
+<!-- svelte:head の中に書いたものは、ページの「head」（画面には出ない、ページについての情報を書く場所）に入る -->
+<svelte:head>
+  <!-- title：ブラウザのタブに出る -->
+  <title>練習｜バイオリン音程チェック</title>
+
+  <!-- このページは検索結果に載せない（中身は、使う人それぞれのブラウザに入っている楽譜なので） -->
+  <meta name="robots" content="noindex" />
+</svelte:head>
+
 <main>
   <!-- 画面の上の行：ホームへ戻るリンクと、ページのタイトルを横に並べる -->
   <div class="header-row">
