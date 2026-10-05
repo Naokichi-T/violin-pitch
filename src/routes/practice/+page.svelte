@@ -155,7 +155,7 @@
       <StepPractice {notes} {currentKey} {temperamentId} {tolerance} />
     {:else}
       <!-- 「通し」モード：メトロノームに合わせて目標の音が進む -->
-      <RunPractice {notes} {currentKey} initialTempo={tempo} />
+      <RunPractice {notes} {currentKey} initialTempo={tempo} {temperamentId} {tolerance} />
     {/if}
 
     <!-- 編集ページへのリンク -->
