@@ -11,8 +11,8 @@
   // 音律の一覧と、周波数や平均律からのズレを計算する関数を読み込む
   import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID, getTemperament, getFrequency, getCentsFromEqual } from "#lib/tuning.js";
 
-  // 選んだ音律をブラウザに保存する関数と、読み込む関数を読み込む
-  import { loadTemperamentId, saveTemperamentId } from "#lib/settings.js";
+  // 設定（音律、音を鳴らすかどうか）をブラウザに保存する関数と、読み込む関数を読み込む
+  import { loadTemperamentId, saveTemperamentId, loadSoundEnabled, saveSoundEnabled } from "#lib/settings.js";
 
   // 指定した周波数の音を鳴らす関数を読み込む
   import { playTone } from "#lib/audio.js";
@@ -57,11 +57,30 @@
   // 選択中の音律のデータ（説明の文を表示するために使う）
   let currentTemperament = $derived(getTemperament(temperamentId));
 
-  // このページが画面に表示された直後に、最後に選んだ音律をブラウザから読み込む
+  // 音を入れたとき・選んだときに、音を鳴らすかどうか（true：鳴らす、false：鳴らさない）
+  // 最初は「鳴らす」にしておき、画面に表示された後で、保存された設定に入れ替える
+  let soundEnabled = $state(true);
+
+  // このページが画面に表示された直後に、保存された設定をブラウザから読み込む
   // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
   onMount(() => {
     temperamentId = loadTemperamentId();
+    soundEnabled = loadSoundEnabled();
   });
+
+  /**
+   * 音を鳴らすかどうかを切り替える関数
+   * 「鳴らす」「鳴らさない」のボタンを押したときに呼ばれる。
+   * 設定を切り替えて、次に開いたときのためにブラウザに保存する。
+   * @param {boolean} enabled - 鳴らすなら true、鳴らさないなら false
+   */
+  function changeSoundEnabled(enabled) {
+    // 設定を切り替える
+    soundEnabled = enabled;
+
+    // ブラウザに保存する
+    saveSoundEnabled(enabled);
+  }
 
   /**
    * 音律を切り替える関数
@@ -137,9 +156,15 @@
   /**
    * 音を1つ鳴らす関数
    * 音のデータから、選択中の調と音律での周波数を求めて、その高さの音を鳴らす。
+   * 音を鳴らさない設定のときは、何もしない。
    * @param {{step: number, accidental: number, octave: number}} note - 音のデータ
    */
   function playNote(note) {
+    // 「鳴らさない」の設定のときは、ここで終わる
+    if (!soundEnabled) {
+      return;
+    }
+
     playTone(getFrequency(note, currentKey, temperamentId));
   }
 
@@ -296,6 +321,16 @@
   <!-- 選択中の音律の説明（見た目は、音階の表示と同じスタイルを使う） -->
   <p class="scale">{currentTemperament.description}</p>
 
+  <!-- 音を入れたとき・選んだときに、音を鳴らすかどうかの切り替え -->
+  <!-- あまり切り替えない設定なので、目立たない小さなチェックボックスにしている -->
+  <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
+  <label class="sound-toggle">
+    <!-- checked で今の設定を表示し、切り替えられたら changeSoundEnabled を呼ぶ -->
+    <!-- event.currentTarget.checked に、チェックが入っているか（true・false）が入っている -->
+    <input type="checkbox" checked={soundEnabled} onchange={(event) => changeSoundEnabled(event.currentTarget.checked)} />
+    音を入れたとき・選んだときに音を鳴らす
+  </label>
+
   <!-- 五線譜（登録した音の並びと、調号の数を渡して表示する） -->
   <!-- selectedIndex で選択中の音を伝え、音符がタップされたら selectNote を呼んでもらう -->
   <Staff {notes} signature={currentKey.signature} {selectedIndex} onselect={selectNote} />
@@ -446,6 +481,17 @@
     margin: 8px 0 0 0;
     font-size: 0.9rem;
     color: #616161;
+  }
+
+  /* 音を鳴らすかどうかのチェックボックス：小さく目立たないように表示する */
+  .sound-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: #616161;
+    cursor: pointer;
   }
 
   /* 登録した音の一覧：枠で囲み、音を横に並べて端で折り返す */
