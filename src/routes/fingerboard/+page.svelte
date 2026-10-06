@@ -13,7 +13,7 @@
   import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID, getFrequency, getOpenStringFrequency } from "#lib/tuning.js";
 
   // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む
-  import { playTone, stopTone } from "#lib/audio.js";
+  import { playTone, stopTone, isAudioRunning, unlockAudio } from "#lib/audio.js";
 
   // 今の基準の音（ラ4 の周波数）を返す関数を読み込む（注意書きに表示するために使う）
   import { getReferenceFrequency } from "#lib/reference.svelte.js";
@@ -117,6 +117,19 @@
     }
   });
 
+  // ページのどこかで、指を離す・キーを押す、という操作があったら、音を出せる状態にしておく
+  // （調を選ぶなど、印を押す前に何か操作をしていれば、最初に印を押したときから、押している間ずっと鳴らせる）
+  onMount(() => {
+    window.addEventListener("pointerup", unlockAudio);
+    window.addEventListener("keydown", unlockAudio);
+
+    // onMount の中で関数を返すと、このページが画面から消えるときに、その関数が呼ばれる（後片付け）
+    return () => {
+      window.removeEventListener("pointerup", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+  });
+
   // このページが画面から消えるときに、鳴っている音を止める
   // （止めないと、別のページに移っても音が鳴り続けてしまうため）
   onDestroy(() => {
@@ -194,12 +207,23 @@
     startMarkerTone(marker, undefined);
   }
 
+  // 指で押しはじめたときに、まだ音を出せない状態だったかどうか
+  // （ページを開いて最初の操作のとき。ブラウザは、指を離すなどの操作があるまで、音を出させてくれない）
+  let wasSilentHold = false;
+
+  // 指で押している印のデータ（押していないときは null）。指を離したときに、音を鳴らし直すために覚えておく
+  let holdingMarker = null;
+
   /**
    * 印が指で押されたとき（スマホなど）に、その音を鳴らしはじめる関数
    * 指が離れるまで鳴らし続ける（離れたときの処理は stopHold）。
    * @param {object} marker - 押された印のデータ
    */
   function startHold(marker) {
+    // 今、音を出せる状態かどうかを覚えておく（出せないのは、ページを開いて最初の操作のとき）
+    wasSilentHold = !isAudioRunning();
+    holdingMarker = marker;
+
     // 上限の長さで鳴らしはじめる（指が離れたら、stopHold で途中で止める）
     startMarkerTone(marker, HOLD_MAX_SECONDS);
 
@@ -210,8 +234,20 @@
   /**
    * 印を押していた指が離れたときに、音を止める関数
    * 鳴らしはじめてからの時間が短すぎるときは、最低の長さになるまで待ってから止める。
+   * ページを開いて最初の操作で、押している間に鳴らせなかったときは、ここで短く鳴らす。
    */
   function stopHold() {
+    // 押しはじめたときに音を出せない状態だったとき（ページを開いて最初の操作のとき）は、
+    // 押している間は鳴らせなかったので、指を離した今、短く鳴らす
+    // （指を離したときなら、ブラウザが音を出させてくれる）
+    if (wasSilentHold && holdingMarker !== null) {
+      wasSilentHold = false;
+      startMarkerTone(holdingMarker, HOLD_MIN_MILLISECONDS / 1000);
+      holdingMarker = null;
+      return;
+    }
+    holdingMarker = null;
+
     // 鳴らしはじめてから、どれだけたったか（ミリ秒）
     const elapsed = performance.now() - holdStartTime;
 

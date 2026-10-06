@@ -284,3 +284,24 @@ export function scheduleClick(time, isAccent) {
   oscillator.start(time);
   oscillator.stop(time + CLICK_DURATION);
 }
+
+// ===== 音を出せる状態かどうか =====
+
+/**
+ * 今、音を出せる状態かどうかを返す関数
+ * ブラウザは、ページを開いた直後は音を出せないようにしていて、
+ * 画面を押して指を離す・クリックする・キーを押す、などの操作があってはじめて、音を出せるようになる。
+ * @returns {boolean} true：音を出せる、false：まだ出せない（土台をまだ作っていないときも false）
+ */
+export function isAudioRunning() {
+  return audioContext !== null && audioContext.state === "running";
+}
+
+/**
+ * 音を出せる状態にしておく関数
+ * 音を扱う土台（AudioContext）を用意して、止まっていれば動かす。音は鳴らさない。
+ * ブラウザが「操作があった」と認める処理（指を離したとき・クリックしたとき・キーを押したとき）の中から呼ぶこと。
+ */
+export function unlockAudio() {
+  getAudioContext();
+}
