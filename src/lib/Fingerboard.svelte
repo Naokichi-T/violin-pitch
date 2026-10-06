@@ -13,9 +13,23 @@
   // position  ：ポジションの番号（1〜7）
   // labelMode ：印の中に書くもの（"name"：音名、"finger"：指番号）
   // selectedId：選択中の印の id（getMarkerId で作る文字）。選択していないときは null
-  // onselect  ：印がタップされたときに呼ぶ関数。タップされた印のデータを渡す
-  // selectedId と onselect は、渡されなかったときのための初期値を決めておく
-  let { key, position, labelMode, selectedId = null, onselect = () => {} } = $props();
+  // onselect  ：印がマウスでクリックされたとき（またはキーボードで選ばれたとき）に呼ぶ関数。その印のデータを渡す
+  // onpress   ：印が指で押されたとき（スマホなど）に呼ぶ関数。その印のデータを渡す
+  // onrelease ：印を押していた指が離れたときに呼ぶ関数
+  // selectedId・onselect・onpress・onrelease は、渡されなかったときのための初期値を決めておく
+  let { key, position, labelMode, selectedId = null, onselect = () => {}, onpress = () => {}, onrelease = () => {} } = $props();
+
+  // 指が離れたあと、この時間（ミリ秒）のあいだに届いたクリックは無視する
+  // （スマホでは、指を離した直後に、ブラウザが「クリックされた」という知らせも送ってくるため。
+  //   無視しないと、指を離したときに、もう一度音が鳴ってしまう）
+  const IGNORE_CLICK_MILLISECONDS = 500;
+
+  // 今、印を押している指の番号（ブラウザが指1本ごとに付ける番号）。押していないときは null
+  // 2本目の指で別の印に触れたときに、1本目の指と区別するために覚えておく
+  let pressingPointerId = null;
+
+  // 最後に指が離れた時刻（ミリ秒）。まだ一度も離れていないときは、とても昔の時刻にしておく
+  let lastReleaseTime = -Infinity;
 
   // ===== 図の大きさと位置の設定値（単位は、SVGの中の座標） =====
 
@@ -106,6 +120,57 @@
   }
 
   /**
+   * 印が押されはじめたときの処理をする関数
+   * 指で押されたとき（スマホなど）だけ、押されたことを使う側に伝える。
+   * マウスのときは何もしない（マウスは、クリックされたときに handleClick で処理する）。
+   * @param {PointerEvent} event - 押されたときの情報
+   * @param {object} marker - その印のデータ
+   */
+  function handlePointerDown(event, marker) {
+    // event.pointerType は、何で押されたか（"touch"：指、"mouse"：マウス、"pen"：ペン）
+    if (event.pointerType !== "touch") {
+      return;
+    }
+
+    // どの指で押しているかを覚えて、押されたことを伝える
+    pressingPointerId = event.pointerId;
+    onpress(marker);
+  }
+
+  /**
+   * 印を押していた指が離れたとき（または、スクロールなどで押すのが取り消されたとき）の処理をする関数
+   * 押していた指のときだけ、離れたことを使う側に伝える。
+   * @param {PointerEvent} event - 離れたときの情報
+   */
+  function handlePointerEnd(event) {
+    // 印を押していた指とは別の指のときは、何もしない
+    if (event.pointerId !== pressingPointerId) {
+      return;
+    }
+
+    // 「押していない」状態に戻して、離れた時刻を覚えておく
+    pressingPointerId = null;
+    lastReleaseTime = performance.now();
+
+    onrelease();
+  }
+
+  /**
+   * 印がクリックされたときの処理をする関数
+   * マウスでクリックされたときに、選ばれたことを使う側に伝える。
+   * 指を離した直後に届くクリックは、すでに handlePointerDown で処理しているので、無視する。
+   * @param {object} marker - その印のデータ
+   */
+  function handleClick(marker) {
+    // 指が離れた直後のクリックは無視する
+    if (performance.now() - lastReleaseTime < IGNORE_CLICK_MILLISECONDS) {
+      return;
+    }
+
+    onselect(marker);
+  }
+
+  /**
    * 印の上でキーが押されたときの処理をする関数
    * キーボードで操作する人のために、Enter キーかスペースキーでも印を選べるようにする。
    * @param {KeyboardEvent} event - キーが押されたときの情報
@@ -185,7 +250,11 @@
       role="button"
       tabindex="0"
       aria-label="{STRINGS[marker.stringIndex].id}線の{marker.name}"
-      onclick={() => onselect(marker)}
+      onpointerdown={(event) => handlePointerDown(event, marker)}
+      onpointerup={handlePointerEnd}
+      onpointercancel={handlePointerEnd}
+      oncontextmenu={(event) => event.preventDefault()}
+      onclick={() => handleClick(marker)}
       onkeydown={(event) => handleKeydown(event, marker)}
     >
       {#if marker.inScale}
@@ -220,6 +289,11 @@
     /* 文字を選択できないようにする（図をタップしたときに、文字が選ばれてしまうのを防ぐ） */
     user-select: none;
     -webkit-user-select: none;
+    /* 指で長押ししたときに、ブラウザのメニュー（コピーなど）が出ないようにする（iPhone 用） */
+    -webkit-touch-callout: none;
+    /* 図の上で指を動かしたとき、ブラウザに任せるのは「縦のスクロール」と「2本指の拡大・縮小」だけにする */
+    /* （こうしておくと、押している指が少し横にずれても、音が止まらない） */
+    touch-action: pan-y pinch-zoom;
   }
 
   /* 指板の板：黒檀（こくたん）のような、黒っぽい茶色 */

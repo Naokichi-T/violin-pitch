@@ -63,6 +63,22 @@
   // 最後に鳴らした音の周波数（Hz）。まだ鳴らしていないときは null
   let playedFrequency = $state(null);
 
+  // ===== 指で押している間、音を鳴らし続けるための設定値と覚えておく値 =====
+
+  // 指で押し続けたときに、鳴らし続ける長さの上限（秒）
+  // 指が離れたことをスマホが伝えそこねたときに、鳴りっぱなしになるのを防ぐ
+  const HOLD_MAX_SECONDS = 30;
+
+  // 軽くタップしただけのときでも、最低これだけは鳴らす長さ（ミリ秒）
+  // ピチカート（弦を指ではじく弾き方）のような、短い音になる
+  const HOLD_MIN_MILLISECONDS = 300;
+
+  // 指で押して鳴らしはじめた時刻（ミリ秒）
+  let holdStartTime = 0;
+
+  // 「少し待ってから音を止める」予約の番号（予約していないときは null）
+  let stopTimerId = null;
+
   // 選択中の印の id（押していないときは null）。図の中で、その印を目立たせるために渡す
   let selectedId = $derived(selectedMarker === null ? null : getMarkerId(selectedMarker));
 
@@ -101,6 +117,7 @@
   // このページが画面から消えるときに、鳴っている音を止める
   // （止めないと、別のページに移っても音が鳴り続けてしまうため）
   onDestroy(() => {
+    cancelStopTimer();
     stopTone();
   });
 
@@ -117,29 +134,99 @@
   });
 
   /**
-   * 印が押されたときに、その音を鳴らす関数
-   * 開放弦の印は、開放弦の高さ（ラ4＝442Hz から5度ずつ合わせた高さ）で鳴らす。
-   * それ以外の印（音階にない場所の点も含む）は、選択中の調と音律での高さで鳴らす。
-   * @param {object} marker - 押された印のデータ
+   * 印の音の周波数を求める関数
+   * 開放弦の印は、開放弦の高さ（ラ4＝442Hz から5度ずつ合わせた高さ）にする。
+   * それ以外の印（音階にない場所の点も含む）は、選択中の調と音律での高さにする。
+   * @param {object} marker - 印のデータ
+   * @returns {number} 周波数（Hz）
    */
-  function playMarker(marker) {
-    // 鳴らす周波数を決める
-    let frequency;
+  function getMarkerFrequency(marker) {
     if (marker.semitones === 0) {
       // 開放弦：調弦で決まっている高さ（音律に関係なく、いつも同じ）
       // 弦の一覧に入っている、開放弦の音のデータから求める
-      frequency = getOpenStringFrequency(STRINGS[marker.stringIndex].openNote);
-    } else {
-      // 指で押さえる音：選択中の調と音律での高さ
-      frequency = getFrequency(marker.note, currentKey, temperamentId);
+      return getOpenStringFrequency(STRINGS[marker.stringIndex].openNote);
     }
 
-    // 音を鳴らす
-    playTone(frequency);
+    // 指で押さえる音：選択中の調と音律での高さ
+    return getFrequency(marker.note, currentKey, temperamentId);
+  }
 
-    // どの印を押したかと、鳴らした周波数を覚えておく（図の印を目立たせて、下に周波数を表示する）
+  /**
+   * 「少し待ってから音を止める」予約を取り消す関数
+   * 予約が残ったままだと、次に鳴らした音が、途中で止められてしまうため。
+   * 予約していないときは、何もしない。
+   */
+  function cancelStopTimer() {
+    if (stopTimerId !== null) {
+      clearTimeout(stopTimerId);
+      stopTimerId = null;
+    }
+  }
+
+  /**
+   * 印の音を、決めた長さで鳴らしはじめる関数
+   * どの印を押したかと、鳴らした周波数も覚えておく（図の印を目立たせて、下に周波数を表示する）。
+   * @param {object} marker - 印のデータ
+   * @param {number|undefined} duration - 鳴らす長さ（秒）。undefined のときは、playTone の決まった長さ（0.8秒）
+   */
+  function startMarkerTone(marker, duration) {
+    // 前の音を止める予約が残っていれば、取り消す
+    cancelStopTimer();
+
+    // 音を鳴らす
+    const frequency = getMarkerFrequency(marker);
+    playTone(frequency, duration);
+
+    // どの印を押したかと、鳴らした周波数を覚えておく
     selectedMarker = marker;
     playedFrequency = frequency;
+  }
+
+  /**
+   * 印がマウスでクリックされたとき（またはキーボードで選ばれたとき）に、その音を短く鳴らす関数
+   * @param {object} marker - 押された印のデータ
+   */
+  function playMarker(marker) {
+    // 長さを渡さないので、決まった長さ（0.8秒）で鳴る
+    startMarkerTone(marker, undefined);
+  }
+
+  /**
+   * 印が指で押されたとき（スマホなど）に、その音を鳴らしはじめる関数
+   * 指が離れるまで鳴らし続ける（離れたときの処理は stopHold）。
+   * @param {object} marker - 押された印のデータ
+   */
+  function startHold(marker) {
+    // 上限の長さで鳴らしはじめる（指が離れたら、stopHold で途中で止める）
+    startMarkerTone(marker, HOLD_MAX_SECONDS);
+
+    // 鳴らしはじめた時刻を覚えておく
+    holdStartTime = performance.now();
+  }
+
+  /**
+   * 印を押していた指が離れたときに、音を止める関数
+   * 鳴らしはじめてからの時間が短すぎるときは、最低の長さになるまで待ってから止める。
+   */
+  function stopHold() {
+    // 鳴らしはじめてから、どれだけたったか（ミリ秒）
+    const elapsed = performance.now() - holdStartTime;
+
+    // 最低の長さまで、あとどれだけ残っているか（ミリ秒）
+    const remaining = HOLD_MIN_MILLISECONDS - elapsed;
+
+    if (remaining <= 0) {
+      // もう十分に鳴らしたので、すぐに止める
+      stopTone();
+      return;
+    }
+
+    // まだ短いので、残りの時間だけ待ってから止める
+    cancelStopTimer();
+    stopTimerId = setTimeout(() => {
+      stopTimerId = null;
+      stopTone();
+    }, remaining);
   }
 </script>
 
@@ -223,8 +310,9 @@
   </p>
 
   <!-- 指板の図（調・ポジション・印の中に書くもの・選択中の印を渡す） -->
-  <!-- 印が押されたら playMarker を呼んでもらう -->
-  <Fingerboard key={currentKey} position={positionId} {labelMode} {selectedId} onselect={playMarker} />
+  <!-- マウスでクリックされたら playMarker（短く鳴らす）を呼んでもらう -->
+  <!-- 指で押されたら startHold（鳴らしはじめる）、指が離れたら stopHold（止める）を呼んでもらう -->
+  <Fingerboard key={currentKey} position={positionId} {labelMode} {selectedId} onselect={playMarker} onpress={startHold} onrelease={stopHold} />
 
   <!-- 図の見方 -->
   <ul class="legend">
