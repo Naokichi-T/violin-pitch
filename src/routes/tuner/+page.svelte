@@ -2,238 +2,173 @@
   // onDestroy：このページが画面から消えるときに後片付けをするための仕組み
   import { onDestroy } from "svelte";
 
-  // 音の大きさの計算と、周波数の検出をする関数を読み込む
+  // マイクの音の高さを調べはじめる関数と、やめる関数を読み込む
   // （このバージョンのSvelteKitでは、src/lib フォルダを「#lib」と書いて指す）
-  import { calculateRms, detectPitch } from "#lib/pitch.js";
+  import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
 
   // 周波数から音名とズレを計算する関数と、ズレを表示用の文字列にする関数を読み込む
   import { frequencyToNote, formatCents } from "#lib/note.js";
 
+  // 開放弦の周波数を返す関数を読み込む（合わせる高さを決めるために使う）
+  import { getOpenStringFrequency } from "#lib/tuning.js";
+
+  // 弦の一覧（G線・D線・A線・E線）を読み込む
+  import { STRINGS } from "#lib/fingerboard.js";
+
+  // 音のデータを表示用の文字にする関数を読み込む（合わせる音を「レ4」のように表示するために使う）
+  import { noteToText } from "#lib/score.js";
+
+  // ズレを針で表示するメーターの部品を読み込む
+  import Meter from "#lib/Meter.svelte";
+
   // ===== 設定値 =====
 
-  // 直近の検出値を何回分ためておくか（1秒に約60回検出するので、30回分は約0.5秒分）
-  const HISTORY_SIZE = 30;
+  // 「OK」とする範囲（セント）。合わせる高さから ±5 セント以内なら OK
+  // （練習モードより厳しくしてある。調弦は、曲を弾く前の土台になるため）
+  const TOLERANCE = 5;
+
+  // メーターに表示する範囲（セント）。左の端が −50、右の端が +50
+  const METER_RANGE = 50;
+
+  // 弦の選び方が「自動」のときの id
+  const AUTO_ID = "auto";
+
+  // 「自動」で、まだ音が鳴っていないときに選んでおく弦の番号（2 は A線。調弦は A線から始めることが多いため）
+  const DEFAULT_STRING_INDEX = 2;
+
+  // 4本の弦それぞれの、合わせる高さ（Hz）。STRINGS と同じ順番（G・D・A・E）に並ぶ
+  // 開放弦の高さは、基準の音（ラ4）から5度ずつ合わせた高さ。練習モードと同じ関数から求める
+  const STRING_FREQUENCIES = STRINGS.map((string) => getOpenStringFrequency(string.openNote));
 
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
   // マイクが動いているかどうか（true：動作中、false：停止中）
   let isRunning = $state(false);
 
-  // 音の大きさ（0〜100）。バーの長さに使う
-  let volume = $state(0);
-
-  // 表示する周波数（Hz）。直近の検出値の中央値。検出できていないときは null
-  let frequency = $state(null);
-
-  // 【確認用】直近の検出値の中での最小値（Hz）。検出できていないときは null
-  let frequencyMin = $state(null);
-
-  // 【確認用】直近の検出値の中での最大値（Hz）。検出できていないときは null
-  let frequencyMax = $state(null);
-
-  // 音名とズレの情報。検出できていないときは null
-  // $derived を付けると、frequency が変わるたびに自動で計算し直される
-  let note = $derived(frequency !== null ? frequencyToNote(frequency) : null);
-
   // エラーメッセージ（エラーがないときは空文字）
   let errorMessage = $state("");
 
-  // ===== 音声処理で使う部品（画面には表示しないので $state は付けない） =====
+  // 今鳴っている音の周波数（Hz）。音が出ていないときは null
+  let frequency = $state(null);
 
-  // AudioContext：ブラウザで音を扱うための土台になる部品
-  let audioContext = null;
+  // 弦の選び方。"auto"（自動）か、弦の id（"G"・"D"・"A"・"E"）
+  let selectedStringId = $state(AUTO_ID);
 
-  // AnalyserNode：音の波形データを取り出すための部品
-  let analyser = null;
+  // 「自動」のときに、最後に選ばれた弦の番号（0 が G線、3 が E線）
+  // 音が止まっても、この番号は残しておく（表示がちらちら変わらないようにするため）
+  let autoStringIndex = $state(DEFAULT_STRING_INDEX);
 
-  // MediaStream：マイクから流れてくる音そのもの
-  let mediaStream = null;
+  // ===== 上の値から自動で計算される値（$derived を付けると、元の値が変わるたびに計算し直される） =====
 
-  // マイクの音を AudioContext の中に取り込むための部品
-  let sourceNode = null;
+  // 今の音の、音名とズレの情報。音が出ていないときは null
+  let note = $derived(frequency !== null ? frequencyToNote(frequency) : null);
 
-  // 繰り返し処理の番号（停止するときに使う）
-  let animationId = null;
+  // 合わせる弦の番号（0 が G線、3 が E線）
+  // 「自動」のときは最後に選ばれた弦、そうでないときは、ボタンで選んだ弦
+  let targetIndex = $derived(selectedStringId === AUTO_ID ? autoStringIndex : STRINGS.findIndex((string) => string.id === selectedStringId));
 
-  // 波形データを入れておく入れ物（配列）
-  let waveform = null;
+  // 合わせる高さ（Hz）
+  let targetFrequency = $derived(STRING_FREQUENCIES[targetIndex]);
 
-  // 直近の検出値（Hz）をためておく配列。古いものから順に並ぶ
-  let history = [];
+  // 合わせる高さからのズレ（セント）。プラスは高い、マイナスは低い。音が出ていないときは null
+  let cents = $derived(frequency !== null ? getCents(frequency, targetFrequency) : null);
+
+  // 判定の結果。"ok"・"low"（低い）・"high"（高い）・"none"（音が出ていない）のどれか
+  let status = $derived.by(() => {
+    if (cents === null) {
+      return "none";
+    } else if (cents < -TOLERANCE) {
+      return "low";
+    } else if (cents > TOLERANCE) {
+      return "high";
+    } else {
+      return "ok";
+    }
+  });
+
+  // 判定の結果ごとの、画面に表示する文字
+  const STATUS_TEXTS = { ok: "OK", low: "低い", high: "高い", none: "---" };
+
+  /**
+   * 2つの周波数の差を、セントで求める関数
+   * セントは、音の高さの差を表す単位（半音1つ分が 100 セント）。
+   * @param {number} measured - 測った周波数（Hz）
+   * @param {number} target - 目標の周波数（Hz）
+   * @returns {number} ズレ（セント）。プラスは目標より高い、マイナスは低い
+   */
+  function getCents(measured, target) {
+    // 周波数が2倍になると 1200 セント（1オクターブ）上がるので、log2 を使う
+    return 1200 * Math.log2(measured / target);
+  }
+
+  /**
+   * 今の音に一番近い弦の番号を求める関数
+   * 4本の弦それぞれとのズレ（セント）を比べて、一番小さいものを選ぶ。
+   * @param {number} measured - 測った周波数（Hz）
+   * @returns {number} 弦の番号（0 が G線、3 が E線）
+   */
+  function getNearestStringIndex(measured) {
+    let nearestIndex = 0;
+    let nearestDistance = Infinity;
+
+    STRING_FREQUENCIES.forEach((stringFrequency, index) => {
+      // ズレの大きさ（高い・低いは区別しないので、Math.abs でマイナスを外す）
+      const distance = Math.abs(getCents(measured, stringFrequency));
+
+      // 今までで一番近ければ、その弦を覚えておく
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    return nearestIndex;
+  }
+
+  /**
+   * マイクから音の高さが届くたびに呼ばれる関数
+   * 今の音の周波数を覚え、「自動」のときは、一番近い弦を選び直す。
+   * @param {number|null} detected - 周波数（Hz）。音が出ていないときは null
+   */
+  function handlePitch(detected) {
+    frequency = detected;
+
+    // 「自動」で、音が出ているときだけ、弦を選び直す
+    // （音が出ていないときは、最後に選ばれた弦のままにしておく）
+    if (detected !== null && selectedStringId === AUTO_ID) {
+      autoStringIndex = getNearestStringIndex(detected);
+    }
+  }
 
   /**
    * マイクを開始する関数
    * 「開始」ボタンを押したときに呼ばれる。
-   * マイクの使用許可を取り、音の解析を始める。
    */
   async function start() {
     // 前回のエラーメッセージを消す
     errorMessage = "";
 
-    // マイクが使えない環境（HTTPSではないページなど）かどうかを確認する
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      errorMessage = "このブラウザ（またはこのページ）ではマイクが使えません。";
-      return;
-    }
-
     try {
-      // マイクの使用許可を求める（ここでブラウザの許可ダイアログが出る）
-      // 楽器の音をそのまま取り込みたいので、通話用の自動補正はすべてオフにする
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false, // エコー除去をオフ
-          noiseSuppression: false, // 雑音除去をオフ
-          autoGainControl: false, // 音量の自動調整をオフ
-        },
-      });
-
-      // 音を扱う土台を作る
-      audioContext = new AudioContext();
-
-      // マイクの音を土台の中に取り込む
-      sourceNode = audioContext.createMediaStreamSource(mediaStream);
-
-      // 波形を取り出す部品を作る
-      analyser = audioContext.createAnalyser();
-
-      // 一度に取り出す波形データの個数（4096個）
-      // 低い音でも周期を正確に測れるように、多めに取り出す
-      analyser.fftSize = 4096;
-
-      // マイクの音を解析用の部品につなぐ
-      sourceNode.connect(analyser);
-
-      // 波形データを入れる入れ物を、データの個数ぶん用意する
-      waveform = new Float32Array(analyser.fftSize);
-
-      // 動作中にする
+      // マイクを開始する。音の高さが分かるたびに、handlePitch が呼ばれる
+      await startMicrophone(handlePitch);
       isRunning = true;
-
-      // 繰り返し処理を始める
-      update();
     } catch (error) {
-      // 許可を拒否された場合や、マイクが見つからない場合はここに来る
-      if (error.name === "NotAllowedError") {
-        errorMessage = "マイクの使用が許可されませんでした。ブラウザの設定を確認してください。";
-      } else if (error.name === "NotFoundError") {
-        errorMessage = "マイクが見つかりませんでした。";
-      } else {
-        errorMessage = "マイクの開始に失敗しました：" + error.message;
-      }
-
-      // 途中まで作った部品を片付ける
+      // マイクが使えなかったとき
+      // どんなエラーかは、microphone.js が日本語のメッセージにしてくれている
+      errorMessage = error.message;
       stop();
-    }
-  }
-
-  /**
-   * 繰り返し処理をする関数
-   * 画面の描画に合わせて（1秒に約60回）呼ばれ続ける。
-   * 波形データを取り出して、音の大きさと周波数を求める。
-   */
-  function update() {
-    // 最新の波形データを入れ物に取り出す（値は -1 〜 1 の範囲）
-    analyser.getFloatTimeDomainData(waveform);
-
-    // 波形から音の大きさを計算する
-    const rms = calculateRms(waveform);
-
-    // バーの長さ（0〜100）に変換する
-    // rms はとても小さい値なので 300 倍し、100 を超えないようにする
-    volume = Math.min(100, rms * 300);
-
-    // 波形から周波数を検出する（検出できなかったときは null が入る）
-    // audioContext.sampleRate は、1秒あたりのデータ数（例：48000）
-    const detected = detectPitch(waveform, audioContext.sampleRate);
-
-    if (detected === null) {
-      // 検出できなかったとき：ためた値を消して、表示を「---」に戻す
-      history = [];
-      frequency = null;
-      frequencyMin = null;
-      frequencyMax = null;
-    } else {
-      // 検出できたとき：検出値を配列の最後に追加する
-      history.push(detected);
-
-      // ためる個数の上限を超えたら、一番古い値（先頭）を捨てる
-      if (history.length > HISTORY_SIZE) {
-        history.shift();
-      }
-
-      // ためた値の中央値を、表示する周波数にする
-      frequency = calculateMedian(history);
-
-      // 【確認用】ためた値の中の最小値と最大値を求める
-      frequencyMin = Math.min(...history);
-      frequencyMax = Math.max(...history);
-    }
-
-    // 次の描画のタイミングで、もう一度この関数を呼ぶ
-    animationId = requestAnimationFrame(update);
-  }
-
-  /**
-   * 中央値を計算する関数
-   * 中央値は、値を小さい順に並べたときに真ん中に来る値のこと。
-   * たまに大きく外れた値が混ざっても、平均と違って影響を受けにくい。
-   * @param {number[]} values - 数値の配列（1個以上入っていること）
-   * @returns {number} 中央値
-   */
-  function calculateMedian(values) {
-    // 元の配列の順番を変えないように、コピーを作ってから小さい順に並べる
-    const sorted = [...values].sort((a, b) => a - b);
-
-    // 真ん中の位置を求める
-    const middle = Math.floor(sorted.length / 2);
-
-    if (sorted.length % 2 === 1) {
-      // 個数が奇数のとき：真ん中の1個がそのまま中央値
-      return sorted[middle];
-    } else {
-      // 個数が偶数のとき：真ん中の2個の平均が中央値
-      return (sorted[middle - 1] + sorted[middle]) / 2;
     }
   }
 
   /**
    * マイクを停止する関数
    * 「停止」ボタンを押したとき、エラーが起きたとき、ページを離れるときに呼ばれる。
-   * 使っていた部品をすべて片付ける。
    */
   function stop() {
-    // 繰り返し処理を止める
-    if (animationId !== null) {
-      cancelAnimationFrame(animationId);
-      animationId = null;
-    }
+    stopMicrophone();
 
-    // マイクと解析用の部品の接続を外す
-    if (sourceNode !== null) {
-      sourceNode.disconnect();
-      sourceNode = null;
-    }
-
-    // マイクを止める（ブラウザの「マイク使用中」の表示が消える）
-    if (mediaStream !== null) {
-      mediaStream.getTracks().forEach((track) => track.stop());
-      mediaStream = null;
-    }
-
-    // 音を扱う土台を閉じる
-    if (audioContext !== null) {
-      audioContext.close();
-      audioContext = null;
-    }
-
-    // 残りの部品と表示を初期状態に戻す
-    analyser = null;
-    waveform = null;
-    history = [];
-    volume = 0;
+    // 表示を初期状態に戻す
     frequency = null;
-    frequencyMin = null;
-    frequencyMax = null;
     isRunning = false;
   }
 
@@ -253,16 +188,17 @@
 </svelte:head>
 
 <main>
-  <!-- ホームへ戻るリンク -->
-  <a class="back-link" href="/">← ホーム</a>
-
-  <h1>チューナー</h1>
+  <!-- 画面の上の行：ホームへ戻るリンクと、ページのタイトルを横に並べる -->
+  <div class="header-row">
+    <a class="back-link" href="/">← ホーム</a>
+    <h1>チューナー</h1>
+  </div>
 
   <!-- 動作中は「停止」ボタン、停止中は「開始」ボタンを表示する -->
   {#if isRunning}
-    <button class="stop" onclick={stop}>停止</button>
+    <button class="main-button stop" onclick={stop}>停止</button>
   {:else}
-    <button class="start" onclick={start}>開始</button>
+    <button class="main-button start" onclick={start}>開始</button>
   {/if}
 
   <!-- エラーがあるときだけメッセージを表示する -->
@@ -270,43 +206,72 @@
     <p class="error">{errorMessage}</p>
   {/if}
 
-  <!-- 音量バー -->
-  <div class="volume-area">
-    <span class="volume-label">音量</span>
-    <div class="volume-track">
-      <!-- volume（0〜100）をそのままバーの幅（％）にする -->
-      <div class="volume-bar" style="width: {volume}%"></div>
+  <!-- ===== 今の音：どんな音でも、音名と周波数を表示する ===== -->
+  <section class="panel">
+    <h2>今の音</h2>
+
+    <!-- 音名と周波数を横に並べる。音が出ていないときは「---」を表示する -->
+    <div class="current-row">
+      {#if note !== null}
+        <span class="note-name">{note.name}{note.octave}</span>
+        <span class="frequency">{frequency.toFixed(1)} Hz</span>
+      {:else}
+        <span class="note-name">---</span>
+        <span class="frequency">--- Hz</span>
+      {/if}
     </div>
-  </div>
 
-  <!-- 音名とズレの表示 -->
-  <div class="note-area">
-    <!-- 検出できているときは音名とズレを表示し、できていないときは「---」を表示する -->
-    {#if note !== null}
-      <p class="note-name">{note.name}{note.octave}</p>
-      <p class="note-cents">{formatCents(note.cents)} セント</p>
-    {:else}
-      <p class="note-name">---</p>
-      <p class="note-cents">--- セント</p>
-    {/if}
-  </div>
-
-  <!-- 周波数の表示 -->
-  <p class="frequency">
-    <!-- 検出できているときは小数第1位まで表示し、できていないときは「---」を表示する -->
-    {#if frequency !== null}
-      {frequency.toFixed(1)} Hz
-    {:else}
-      --- Hz
-    {/if}
-  </p>
-
-  <!-- 【確認用】直近の検出値の最小値と最大値。精度の確認が終わったら消す -->
-  {#if frequencyMin !== null && frequencyMax !== null}
-    <p class="frequency-range">
-      （最小 {frequencyMin.toFixed(1)} ／ 最大 {frequencyMax.toFixed(1)}）
+    <!-- 平均律でのその音からのズレ -->
+    <p class="current-cents">
+      {#if note !== null}
+        平均律の{note.name}{note.octave}より {formatCents(note.cents)} セント
+      {:else}
+        マイクに向かって音を出してください
+      {/if}
     </p>
-  {/if}
+  </section>
+
+  <!-- ===== 調弦：選んだ弦の高さとのズレを表示する ===== -->
+  <section class="panel">
+    <h2>調弦</h2>
+
+    <!-- 弦の選び方：「自動」と、4本の弦のボタンを横に並べる -->
+    <div class="string-row">
+      <!-- 選択中のボタンに selected クラスを付けて色を変える -->
+      <button class="choice" class:selected={selectedStringId === AUTO_ID} onclick={() => (selectedStringId = AUTO_ID)}>自動</button>
+
+      {#each STRINGS as string, index (string.id)}
+        <!-- 「自動」のときは、今選ばれている弦に picked クラスを付けて、どの弦に合わせているかが分かるようにする -->
+        <button class="choice" class:selected={selectedStringId === string.id} class:picked={selectedStringId === AUTO_ID && targetIndex === index} onclick={() => (selectedStringId = string.id)}>
+          {string.id}
+        </button>
+      {/each}
+    </div>
+
+    <!-- 合わせる音（その弦の開放弦の音名）と、その高さ -->
+    <!-- どの弦かは、上のボタンの色で分かるので、ここには音名を出す -->
+    <p class="target">
+      <strong>{noteToText(STRINGS[targetIndex].openNote)}</strong>
+      {targetFrequency.toFixed(1)} Hz に合わせる
+    </p>
+
+    <!-- メーター：合わせる高さからのズレを針で表示する -->
+    <Meter {cents} tolerance={TOLERANCE} range={METER_RANGE} />
+
+    <!-- 判定の結果とズレ。結果（ok・low・high・none）をクラスに付けて、色を変える -->
+    <p class="result {status}">
+      <span class="result-text">{STATUS_TEXTS[status]}</span>
+      {#if cents !== null}
+        <span class="result-cents">{formatCents(cents)} セント</span>
+      {/if}
+    </p>
+  </section>
+
+  <p class="note">
+    合わせる高さは、ラ＝{STRING_FREQUENCIES[2].toFixed(0)}Hz から、となりの弦と5度ずつ合わせた高さです。<br />
+    「自動」は、鳴っている音に一番近い弦を選びます。弦のボタンを押すと、その弦に固定できます。<br />
+    合わせる高さから ±{TOLERANCE} セント以内で「OK」になります。メーターの左右の端は ±{METER_RANGE} セントです。
+  </p>
 </main>
 
 <style>
@@ -314,29 +279,37 @@
   main {
     max-width: 480px;
     margin: 0 auto;
-    padding: 24px 16px;
+    padding: 12px 16px 24px 16px;
     font-family: sans-serif;
+  }
+
+  /* 画面の上の行：リンクとタイトルを横に並べる */
+  .header-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 12px;
   }
 
   /* ホームへ戻るリンク */
   .back-link {
-    display: inline-block;
-    margin-bottom: 16px;
+    flex-shrink: 0;
     color: #1976d2;
+    font-size: 0.9rem;
     text-decoration: none;
   }
 
   /* タイトル */
   h1 {
-    font-size: 1.4rem;
-    margin: 0 0 24px 0;
+    font-size: 1.1rem;
+    margin: 0;
   }
 
-  /* ボタン共通：指で押しやすい大きさにする */
-  button {
+  /* 「開始」「停止」のボタン共通：指で押しやすい大きさにする */
+  button.main-button {
     width: 100%;
-    padding: 16px;
-    font-size: 1.2rem;
+    padding: 14px;
+    font-size: 1.1rem;
     color: white;
     border: none;
     border-radius: 8px;
@@ -344,86 +317,156 @@
   }
 
   /* 開始ボタン（緑） */
-  button.start {
+  button.main-button.start {
     background-color: #2e7d32;
   }
 
   /* 停止ボタン（赤） */
-  button.stop {
+  button.main-button.stop {
     background-color: #c62828;
   }
 
   /* エラーメッセージ */
   .error {
     color: #c62828;
-    margin: 16px 0 0 0;
+    margin: 12px 0 0 0;
   }
 
-  /* 音量バーのエリア：ラベルとバーを横に並べる */
-  .volume-area {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 24px;
-  }
-
-  /* 「音量」のラベル */
-  .volume-label {
-    font-size: 0.9rem;
-    flex-shrink: 0;
-  }
-
-  /* バーの背景（グレーの枠） */
-  .volume-track {
-    flex-grow: 1;
-    height: 16px;
-    background-color: #e0e0e0;
+  /* 「今の音」「調弦」のまとまり：薄い枠で囲む */
+  .panel {
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid #e0e0e0;
     border-radius: 8px;
-    overflow: hidden;
   }
 
-  /* バー本体（音量に応じて幅が変わる） */
-  .volume-bar {
-    height: 100%;
+  /* まとまりの見出し */
+  h2 {
+    margin: 0 0 6px 0;
+    font-size: 0.85rem;
+    color: #616161;
+  }
+
+  /* 今の音：音名と周波数を横に並べて、下の端をそろえる */
+  .current-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  /* 今の音の音名：大きく表示する */
+  .note-name {
+    font-size: 2.6rem;
+    font-weight: bold;
+  }
+
+  /* 今の音の周波数 */
+  .frequency {
+    font-size: 1.4rem;
+    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 平均律からのズレ：小さくグレーで表示する */
+  .current-cents {
+    margin: 2px 0 0 0;
+    font-size: 0.85rem;
+    color: #616161;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 弦を選ぶボタンを横に並べる */
+  .string-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  /* 弦を選ぶボタン（選択前）：白地に青い枠。5つのボタンで、横幅を同じ割合で分け合う */
+  button.choice {
+    flex: 1;
+    padding: 10px 0;
+    font-size: 1rem;
+    font-weight: bold;
+    color: #1976d2;
+    background-color: white;
+    border: 2px solid #1976d2;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  /* 弦を選ぶボタン（選択中）：青く塗る */
+  button.choice.selected {
+    color: white;
     background-color: #1976d2;
   }
 
-  /* 音名とズレのエリア：中央に寄せる */
-  .note-area {
-    margin-top: 32px;
-    text-align: center;
+  /* 「自動」で今選ばれている弦のボタン：薄い青で塗って、合わせている弦が分かるようにする */
+  button.choice.picked {
+    background-color: #bbdefb;
   }
 
-  /* 音名：一番大きく表示する */
-  .note-name {
-    margin: 0;
-    font-size: 4rem;
+  /* 合わせる弦と、その高さ */
+  .target {
+    margin: 12px 0 8px 0;
+    font-size: 0.95rem;
+    color: #424242;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 合わせる弦の名前：大きめの黒い太字 */
+  .target strong {
+    margin-right: 6px;
+    font-size: 1.3rem;
+    color: #212121;
+  }
+
+  /* 判定の結果とズレ：横に並べて中央に寄せる */
+  .result {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 12px;
+    margin: 8px 0 0 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 判定の結果の文字：大きく表示する */
+  .result-text {
+    font-size: 1.8rem;
     font-weight: bold;
   }
 
   /* ズレ（セント） */
-  .note-cents {
-    margin: 4px 0 0 0;
-    font-size: 1.6rem;
-    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
-    font-variant-numeric: tabular-nums;
+  .result-cents {
+    font-size: 1.2rem;
   }
 
-  /* 周波数の表示：大きく中央に表示する */
-  .frequency {
-    margin: 32px 0 0 0;
-    font-size: 2.4rem;
-    text-align: center;
-    /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
-    font-variant-numeric: tabular-nums;
+  /* 判定の結果ごとの色：OK は緑、低いは青、高いは赤、音が出ていないときはグレー */
+  /* （メーターの針の色と同じにしてある） */
+  .result.ok {
+    color: #1b5e20;
   }
 
-  /* 【確認用】最小値と最大値の表示：小さくグレーで表示する */
-  .frequency-range {
-    margin: 4px 0 0 0;
-    font-size: 0.9rem;
+  .result.low {
+    color: #1565c0;
+  }
+
+  .result.high {
+    color: #c62828;
+  }
+
+  .result.none {
+    color: #9e9e9e;
+  }
+
+  /* 注意書き：小さくグレーで表示する */
+  .note {
+    margin: 12px 0 0 0;
+    font-size: 0.75rem;
+    line-height: 1.6;
     color: #757575;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
   }
 </style>
