@@ -4,7 +4,7 @@
   import { onMount, onDestroy } from "svelte";
 
   // 調のデータに関する設定値と関数を読み込む
-  import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames } from "#lib/key.js";
+  import { KEYS, DEFAULT_KEY_ID, getKey, getKeyMenuLabel, getScaleNames } from "#lib/key.js";
 
   // 作業中の楽譜を読み込む関数（最初に表示する調を決めるために使う）と、保存された音律を読み込む関数を読み込む
   import { loadCurrentScore, loadTemperamentId } from "#lib/settings.js";
@@ -293,12 +293,12 @@
       <!-- optgroup は、メニューの中の見出し付きのグループ -->
       <optgroup label="長調">
         {#each majorKeys as key (key.id)}
-          <option value={key.id}>{getKeyLabel(key)}</option>
+          <option value={key.id}>{getKeyMenuLabel(key)}</option>
         {/each}
       </optgroup>
       <optgroup label="短調">
         {#each minorKeys as key (key.id)}
-          <option value={key.id}>{getKeyLabel(key)}</option>
+          <option value={key.id}>{getKeyMenuLabel(key)}</option>
         {/each}
       </optgroup>
     </select>

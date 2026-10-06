@@ -111,6 +111,36 @@ export function getSignatureAccidentals(signature) {
 }
 
 /**
+ * 調号の数を、表示用の文字にする関数
+ * @param {number} signature - 調号の数（プラスは♯の数、マイナスは♭の数、0 は調号なし）
+ * @returns {string} 表示用の文字（例：'♯1つ'、'♭3つ'、'調号なし'）
+ */
+export function getSignatureLabel(signature) {
+  if (signature > 0) {
+    // ♯ の付く調
+    return "♯" + signature + "つ";
+  } else if (signature < 0) {
+    // ♭ の付く調（Math.abs でマイナスを外した数にする）
+    return "♭" + Math.abs(signature) + "つ";
+  } else {
+    // ♯ も ♭ も付かない調（ハ長調・イ短調）
+    return "調号なし";
+  }
+}
+
+/**
+ * 調の、調を選ぶメニューに表示する名前を作る関数
+ * ふつうの名前（getKeyLabel）の後ろに、調号の数を付ける。
+ * 調号の数を一番後ろにしてあるのは、メニューの幅に入りきらないとき、後ろから切れるため
+ * （切れても、メニューを開いた一覧では、全部見える）。
+ * @param {object} key - 調のデータ
+ * @returns {string} 表示用の名前（例：'ト長調（G dur） ♯1つ'）
+ */
+export function getKeyMenuLabel(key) {
+  return getKeyLabel(key) + " " + getSignatureLabel(key.signature);
+}
+
+/**
  * 調の音階を、文字の配列にして返す関数
  * 主音から1オクターブ上の主音まで、8つの音を順に並べる。
  * 短調は、調号どおりの音だけを使う自然短音階で表す。

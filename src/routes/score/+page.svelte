@@ -7,7 +7,7 @@
   import { STEP_NAMES, OCTAVES, isInRange, noteToText, accidentalToText } from "#lib/score.js";
 
   // 調のデータに関する設定値と関数を読み込む
-  import { KEYS, DEFAULT_KEY_ID, getKey, getKeyLabel, getScaleNames, getSignatureAccidentals } from "#lib/key.js";
+  import { KEYS, DEFAULT_KEY_ID, getKey, getKeyMenuLabel, getScaleNames, getSignatureAccidentals } from "#lib/key.js";
 
   // 音律の一覧と、周波数や平均律からのズレを計算する関数を読み込む
   import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID, getTemperament, getFrequency, getCentsFromEqual } from "#lib/tuning.js";
@@ -564,12 +564,12 @@
       <!-- optgroup は、メニューの中の見出し付きのグループ -->
       <optgroup label="長調">
         {#each majorKeys as key (key.id)}
-          <option value={key.id}>{getKeyLabel(key)}</option>
+          <option value={key.id}>{getKeyMenuLabel(key)}</option>
         {/each}
       </optgroup>
       <optgroup label="短調">
         {#each minorKeys as key (key.id)}
-          <option value={key.id}>{getKeyLabel(key)}</option>
+          <option value={key.id}>{getKeyMenuLabel(key)}</option>
         {/each}
       </optgroup>
     </select>
