@@ -400,7 +400,8 @@
     「自動」は、鳴っている音に一番近い弦を選びます。弦のボタンを押すと、その弦に固定できます。<br />
     合わせる高さから ±{TOLERANCE} セント以内で「OK」になります。メーターの左右の端は ±{METER_RANGE} セントです。<br />
     お手本の音は {REFERENCE_SECONDS} 秒鳴ります。鳴っている間は、判定を止めています。<br />
-    基準の音は、{REFERENCE_FREQUENCY_MIN}〜{REFERENCE_FREQUENCY_MAX}Hz の範囲で選べます。設定は、このブラウザに保存されます。
+    基準の音は、{REFERENCE_FREQUENCY_MIN}〜{REFERENCE_FREQUENCY_MAX}Hz の範囲で選べます。設定は、このブラウザに保存されます。<br />
+    iPhone でお手本の音が出ないときは、消音モードを解除してから、ページを開き直してください。
   </p>
 </main>
 
