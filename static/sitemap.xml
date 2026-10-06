@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- サイトマップ：検索エンジンに「このページを見てください」と伝えるための、ページの一覧 -->
-<!-- 検索に載せるのは、ホームと指板の図のページ（誰が見ても同じ内容のページ）だけ -->
+<!-- 検索に載せるのは、ホーム・指板の図・メトロノームのページ（誰が見ても同じ内容のページ）だけ -->
 <!-- （編集・練習などのページは、noindex を付けてあるので、ここには書かない） -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
@@ -8,5 +8,8 @@
   </url>
   <url>
     <loc>https://violin-pitch.vercel.app/fingerboard</loc>
+  </url>
+  <url>
+    <loc>https://violin-pitch.vercel.app/metronome</loc>
   </url>
 </urlset>
