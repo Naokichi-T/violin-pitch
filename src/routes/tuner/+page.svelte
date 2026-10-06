@@ -18,6 +18,9 @@
   // 音のデータを表示用の文字にする関数を読み込む（合わせる音を「レ4」のように表示するために使う）
   import { noteToText } from "#lib/score.js";
 
+  // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む（お手本の音に使う）
+  import { playTone, stopTone } from "#lib/audio.js";
+
   // ズレを針で表示するメーターの部品を読み込む
   import Meter from "#lib/Meter.svelte";
 
@@ -35,6 +38,13 @@
 
   // 「自動」で、まだ音が鳴っていないときに選んでおく弦の番号（2 は A線。調弦は A線から始めることが多いため）
   const DEFAULT_STRING_INDEX = 2;
+
+  // お手本の音を鳴らす長さ（秒）
+  const REFERENCE_SECONDS = 2;
+
+  // お手本の音が鳴り終わってから、判定を再開するまでの待ち時間（ミリ秒）
+  // （マイクに残っているお手本の音を、弾いた音とまちがえないようにするため）
+  const WAIT_AFTER_REFERENCE_MILLISECONDS = 300;
 
   // 4本の弦それぞれの、合わせる高さ（Hz）。STRINGS と同じ順番（G・D・A・E）に並ぶ
   // 開放弦の高さは、基準の音（ラ4）から5度ずつ合わせた高さ。練習モードと同じ関数から求める
@@ -57,6 +67,13 @@
   // 「自動」のときに、最後に選ばれた弦の番号（0 が G線、3 が E線）
   // 音が止まっても、この番号は残しておく（表示がちらちら変わらないようにするため）
   let autoStringIndex = $state(DEFAULT_STRING_INDEX);
+
+  // お手本の音を鳴らしている途中かどうか（true の間は、判定を止める）
+  let isReferencePlaying = $state(false);
+
+  // 「お手本の音が終わったら判定を再開する」予約の番号（予約していないときは null）
+  // 画面には表示しないので、$state は付けない
+  let referenceTimerId = null;
 
   // ===== 上の値から自動で計算される値（$derived を付けると、元の値が変わるたびに計算し直される） =====
 
@@ -131,6 +148,13 @@
    * @param {number|null} detected - 周波数（Hz）。音が出ていないときは null
    */
   function handlePitch(detected) {
+    // お手本の音を鳴らしている間は、判定を止める
+    // （マイクがお手本の音を拾って、勝手に「OK」になったり、弦が切り替わったりするのを防ぐ）
+    if (isReferencePlaying) {
+      frequency = null;
+      return;
+    }
+
     frequency = detected;
 
     // 「自動」で、音が出ているときだけ、弦を選び直す
@@ -138,6 +162,59 @@
     if (detected !== null && selectedStringId === AUTO_ID) {
       autoStringIndex = getNearestStringIndex(detected);
     }
+  }
+
+  /**
+   * お手本の音を鳴らす関数
+   * 今合わせている弦の高さの音を、決めた長さだけ鳴らす。鳴らしている間は、判定を止める。
+   * 「お手本の音を鳴らす」ボタンを押したときに呼ばれる（マイクを開始していなくても鳴らせる）。
+   */
+  function playReference() {
+    // 前のお手本の音が鳴っている途中なら、いったん止める
+    stopReference();
+
+    // 今合わせている弦の高さで鳴らす
+    playTone(targetFrequency, REFERENCE_SECONDS);
+    isReferencePlaying = true;
+
+    // 鳴り終わって、少し待ってから、判定を再開する
+    referenceTimerId = setTimeout(
+      () => {
+        referenceTimerId = null;
+        isReferencePlaying = false;
+      },
+      REFERENCE_SECONDS * 1000 + WAIT_AFTER_REFERENCE_MILLISECONDS,
+    );
+  }
+
+  /**
+   * お手本の音を止めて、判定を再開する関数
+   * 「止める」ボタンを押したとき、弦を選び直したとき、ページを離れるときに呼ばれる。
+   * 鳴らしていないときに呼んでも問題ない。
+   */
+  function stopReference() {
+    // 「終わったら判定を再開する」予約を取り消す
+    if (referenceTimerId !== null) {
+      clearTimeout(referenceTimerId);
+      referenceTimerId = null;
+    }
+
+    // 鳴らしている途中のときだけ、音を止める
+    if (isReferencePlaying) {
+      stopTone();
+      isReferencePlaying = false;
+    }
+  }
+
+  /**
+   * 弦の選び方を変える関数
+   * 「自動」か、弦のボタンを押したときに呼ばれる。
+   * お手本の音が鳴っている途中なら止める（選び直した弦と、違う高さの音が鳴り続けないようにするため）。
+   * @param {string} id - 弦の選び方。"auto"（自動）か、弦の id（"G"・"D"・"A"・"E"）
+   */
+  function selectString(id) {
+    stopReference();
+    selectedStringId = id;
   }
 
   /**
@@ -172,8 +249,9 @@
     isRunning = false;
   }
 
-  // このページが画面から消えるときに、マイクを止める
+  // このページが画面から消えるときに、お手本の音とマイクを止める
   onDestroy(() => {
+    stopReference();
     stop();
   });
 </script>
@@ -225,6 +303,8 @@
     <p class="current-cents">
       {#if note !== null}
         平均律の{note.name}{note.octave}より {formatCents(note.cents)} セント
+      {:else if isReferencePlaying}
+        お手本の音を鳴らしています（判定は止めています）
       {:else}
         マイクに向かって音を出してください
       {/if}
@@ -238,11 +318,11 @@
     <!-- 弦の選び方：「自動」と、4本の弦のボタンを横に並べる -->
     <div class="string-row">
       <!-- 選択中のボタンに selected クラスを付けて色を変える -->
-      <button class="choice" class:selected={selectedStringId === AUTO_ID} onclick={() => (selectedStringId = AUTO_ID)}>自動</button>
+      <button class="choice" class:selected={selectedStringId === AUTO_ID} onclick={() => selectString(AUTO_ID)}>自動</button>
 
       {#each STRINGS as string, index (string.id)}
         <!-- 「自動」のときは、今選ばれている弦に picked クラスを付けて、どの弦に合わせているかが分かるようにする -->
-        <button class="choice" class:selected={selectedStringId === string.id} class:picked={selectedStringId === AUTO_ID && targetIndex === index} onclick={() => (selectedStringId = string.id)}>
+        <button class="choice" class:selected={selectedStringId === string.id} class:picked={selectedStringId === AUTO_ID && targetIndex === index} onclick={() => selectString(string.id)}>
           {string.id}
         </button>
       {/each}
@@ -265,12 +345,20 @@
         <span class="result-cents">{formatCents(cents)} セント</span>
       {/if}
     </p>
+
+    <!-- お手本の音のボタン：鳴らしている間は「止める」に変わる -->
+    {#if isReferencePlaying}
+      <button class="reference playing" onclick={stopReference}>■ お手本の音を止める</button>
+    {:else}
+      <button class="reference" onclick={playReference}>♪ お手本の音を鳴らす（{noteToText(STRINGS[targetIndex].openNote)}）</button>
+    {/if}
   </section>
 
   <p class="note">
     合わせる高さは、ラ＝{STRING_FREQUENCIES[2].toFixed(0)}Hz から、となりの弦と5度ずつ合わせた高さです。<br />
     「自動」は、鳴っている音に一番近い弦を選びます。弦のボタンを押すと、その弦に固定できます。<br />
-    合わせる高さから ±{TOLERANCE} セント以内で「OK」になります。メーターの左右の端は ±{METER_RANGE} セントです。
+    合わせる高さから ±{TOLERANCE} セント以内で「OK」になります。メーターの左右の端は ±{METER_RANGE} セントです。<br />
+    お手本の音は {REFERENCE_SECONDS} 秒鳴ります。鳴っている間は、判定を止めています。
   </p>
 </main>
 
@@ -407,7 +495,7 @@
     background-color: #bbdefb;
   }
 
-  /* 合わせる弦と、その高さ */
+  /* 合わせる音と、その高さ */
   .target {
     margin: 12px 0 8px 0;
     font-size: 0.95rem;
@@ -416,7 +504,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* 合わせる弦の名前：大きめの黒い太字 */
+  /* 合わせる音の名前：大きめの黒い太字 */
   .target strong {
     margin-right: 6px;
     font-size: 1.3rem;
@@ -460,6 +548,25 @@
 
   .result.none {
     color: #9e9e9e;
+  }
+
+  /* お手本の音のボタン：白地に緑の枠。横幅いっぱいにする */
+  button.reference {
+    width: 100%;
+    margin-top: 12px;
+    padding: 12px;
+    font-size: 1rem;
+    color: #2e7d32;
+    background-color: white;
+    border: 2px solid #2e7d32;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  /* お手本の音のボタン（鳴らしている間）：緑で塗る */
+  button.reference.playing {
+    color: white;
+    background-color: #2e7d32;
   }
 
   /* 注意書き：小さくグレーで表示する */
