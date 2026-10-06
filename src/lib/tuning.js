@@ -4,8 +4,8 @@ import { getNoteNumber } from "./score.js";
 // 調号から、各音名に付く変化記号を求める関数を読み込む
 import { getSignatureAccidentals } from "./key.js";
 
-// 基準音（ラ4）の周波数（442Hz）を読み込む
-import { REFERENCE_FREQUENCY } from "./note.js";
+// 今の基準音（ラ4）の周波数を返す関数を読み込む
+import { getReferenceFrequency } from "./reference.svelte.js";
 
 // ===== 音律に関する設定値 =====
 // 音律は、「それぞれの音をどの高さにするか」の決め方のこと
@@ -78,7 +78,7 @@ export function getTemperament(id) {
 function getEqualFrequency(noteNumber) {
   // 基準音から半音いくつ分離れているかを求め、その分だけ周波数を変える
   // 半音12個（1オクターブ）で、周波数がちょうど2倍になる
-  return REFERENCE_FREQUENCY * Math.pow(2, (noteNumber - REFERENCE_NOTE_NUMBER) / 12);
+  return getReferenceFrequency() * Math.pow(2, (noteNumber - REFERENCE_NOTE_NUMBER) / 12);
 }
 
 /**
@@ -94,7 +94,7 @@ function getPythagoreanFrequency(note) {
   const fifths = FIFTHS_FROM_A[note.step] + note.accidental * FIFTHS_PER_ACCIDENTAL;
 
   // ラ＝442Hz に、3/2 を fifths 回掛ける（マイナスのときは、その回数だけ割ることになる）
-  let frequency = REFERENCE_FREQUENCY * Math.pow(3 / 2, fifths);
+  let frequency = getReferenceFrequency() * Math.pow(3 / 2, fifths);
 
   // 5度を積み重ねると、オクターブがずれていく。
   // そこで、この音のオクターブの高さになるまで、2倍または半分にして合わせる。
@@ -192,18 +192,19 @@ export function getCentsFromEqual(note, key, temperamentId) {
 
 // ===== 開放弦の高さ =====
 
-// バイオリンの4本の開放弦（指を押さえない弦）の音と、その周波数
+// バイオリンの4本の開放弦（指を押さえない弦）の音と、基準音（ラ4）の何倍の周波数か
 // ラ4（A線）を基準音に合わせ、そこから5度ずつきれいに合わせた、ふつうの調弦の高さ
 // 5度上は周波数が 3/2 倍、5度下は 2/3 倍になる
+// （周波数そのものではなく「何倍か」を持っておき、使うときに、今の基準音に掛ける）
 const OPEN_STRINGS = [
   // G線：ソ3（ラ4 から5度を2回下がる。2/3 × 2/3 ＝ 4/9）
-  { step: 4, octave: 3, frequency: (REFERENCE_FREQUENCY * 4) / 9 },
+  { step: 4, octave: 3, ratio: 4 / 9 },
   // D線：レ4（ラ4 から5度を1回下がる）
-  { step: 1, octave: 4, frequency: (REFERENCE_FREQUENCY * 2) / 3 },
+  { step: 1, octave: 4, ratio: 2 / 3 },
   // A線：ラ4（基準音）
-  { step: 5, octave: 4, frequency: REFERENCE_FREQUENCY },
+  { step: 5, octave: 4, ratio: 1 },
   // E線：ミ5（ラ4 から5度を1回上がる）
-  { step: 2, octave: 5, frequency: (REFERENCE_FREQUENCY * 3) / 2 },
+  { step: 2, octave: 5, ratio: 3 / 2 },
 ];
 
 /**
@@ -221,7 +222,8 @@ export function getOpenStringFrequency(note) {
   // 4本の開放弦を順に見て、音名とオクターブが同じものを探す
   for (const openString of OPEN_STRINGS) {
     if (openString.step === note.step && openString.octave === note.octave) {
-      return openString.frequency;
+      // 今の基準音に、その弦の「何倍か」を掛けて、周波数にする
+      return getReferenceFrequency() * openString.ratio;
     }
   }
 

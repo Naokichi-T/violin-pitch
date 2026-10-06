@@ -1,3 +1,6 @@
+// 基準の音の最初の設定と、使える値に直す関数を読み込む
+import { DEFAULT_REFERENCE_FREQUENCY, normalizeReferenceFrequency } from "./reference.svelte.js";
+
 // 音律の一覧と、最初の設定を読み込む
 import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID } from "./tuning.js";
 
@@ -346,4 +349,35 @@ export function loadModeId() {
  */
 export function saveModeId(id) {
   localStorage.setItem(MODE_ID_KEY, id);
+}
+
+// ===== 基準の音（ラ4 の高さ） =====
+
+// 基準の音を保存するときの名前（キー）
+const REFERENCE_FREQUENCY_KEY = "violin-pitch:referenceFrequency";
+
+/**
+ * 保存しておいた基準の音（ラ4 の周波数）を読み込む関数
+ * @returns {number} 周波数（Hz）。保存していないとき・使えない値のときは、最初の設定（442）
+ */
+export function loadReferenceFrequency() {
+  // ブラウザの保存場所から、文字として取り出す（保存していないときは null が返る）
+  const text = localStorage.getItem(REFERENCE_FREQUENCY_KEY);
+
+  // 保存していないときは、最初の設定にする
+  if (text === null) {
+    return DEFAULT_REFERENCE_FREQUENCY;
+  }
+
+  // 文字を数に変えて、使える値（範囲の中の整数）に直す
+  return normalizeReferenceFrequency(Number(text));
+}
+
+/**
+ * 基準の音（ラ4 の周波数）をブラウザに保存する関数
+ * @param {number} frequency - 周波数（Hz）
+ */
+export function saveReferenceFrequency(frequency) {
+  // ブラウザの保存場所には文字しか入れられないので、文字に変えて保存する
+  localStorage.setItem(REFERENCE_FREQUENCY_KEY, String(frequency));
 }

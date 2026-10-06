@@ -1,7 +1,7 @@
-// ===== 音名の計算のための設定値 =====
+// 今の基準音（ラ4）の周波数を返す関数を読み込む
+import { getReferenceFrequency } from "./reference.svelte.js";
 
-// 基準音（ラ4）の周波数（Hz）。このアプリでは 442Hz を使う
-export const REFERENCE_FREQUENCY = 442;
+// ===== 音名の計算のための設定値 =====
 
 // 基準音（ラ4）の音番号。
 // 音番号は、半音ごとに1ずつ増える通し番号のこと（ド4が60、ラ4が69と決まっている）
@@ -22,7 +22,7 @@ const NOTE_NAMES = ["ド", "ド♯", "レ", "レ♯", "ミ", "ファ", "ファ�
 export function frequencyToNote(frequency) {
   // 基準音から半音いくつ分離れているかを計算する（小数になる）
   // 周波数が2倍になると1オクターブ（半音12個分）上がるので、log2 を使う
-  const semitonesFromReference = 12 * Math.log2(frequency / REFERENCE_FREQUENCY);
+  const semitonesFromReference = 12 * Math.log2(frequency / getReferenceFrequency());
 
   // 一番近い整数に丸める（これが「一番近い音」までの半音の数になる）
   const nearestSemitones = Math.round(semitonesFromReference);
