@@ -381,3 +381,74 @@ export function saveReferenceFrequency(frequency) {
   // ブラウザの保存場所には文字しか入れられないので、文字に変えて保存する
   localStorage.setItem(REFERENCE_FREQUENCY_KEY, String(frequency));
 }
+
+// ===== メトロノームのテンポと拍子 =====
+
+// メトロノームのテンポを保存するときの名前（キー）
+const METRONOME_TEMPO_KEY = "violin-pitch:metronomeTempo";
+
+/**
+ * 保存しておいたメトロノームのテンポを読み込む関数
+ * @param {number} min - 使えるテンポの一番遅い値
+ * @param {number} max - 使えるテンポの一番速い値
+ * @param {number} defaultTempo - 保存していないとき・使えない値のときに返すテンポ
+ * @returns {number} テンポ（1分間の拍の数）
+ */
+export function loadMetronomeTempo(min, max, defaultTempo) {
+  // ブラウザの保存場所から、文字として取り出す（保存していないときは null が返る）
+  const text = localStorage.getItem(METRONOME_TEMPO_KEY);
+
+  // 保存していないとき
+  if (text === null) {
+    return defaultTempo;
+  }
+
+  // 文字を数に変える
+  const tempo = Number(text);
+
+  // 整数でないときや、範囲からはみ出しているときは、使わない
+  if (!Number.isInteger(tempo) || tempo < min || tempo > max) {
+    return defaultTempo;
+  }
+
+  return tempo;
+}
+
+/**
+ * メトロノームのテンポをブラウザに保存する関数
+ * @param {number} tempo - テンポ（1分間の拍の数）
+ */
+export function saveMetronomeTempo(tempo) {
+  // ブラウザの保存場所には文字しか入れられないので、文字に変えて保存する
+  localStorage.setItem(METRONOME_TEMPO_KEY, String(tempo));
+}
+
+// メトロノームの拍子を保存するときの名前（キー）
+const METRONOME_BEATS_KEY = "violin-pitch:metronomeBeats";
+
+/**
+ * 保存しておいたメトロノームの拍子を読み込む関数
+ * 選べる拍子かどうかは、使う側（メトロノームのページ）で確かめる。
+ * @returns {number|null} 1小節の拍の数（0 は「なし」）。保存していないとき・整数でないときは null
+ */
+export function loadMetronomeBeats() {
+  // ブラウザの保存場所から、文字として取り出す（保存していないときは null が返る）
+  const text = localStorage.getItem(METRONOME_BEATS_KEY);
+
+  // 保存していないとき
+  if (text === null) {
+    return null;
+  }
+
+  // 文字を数に変えて、整数のときだけ返す
+  const beats = Number(text);
+  return Number.isInteger(beats) ? beats : null;
+}
+
+/**
+ * メトロノームの拍子をブラウザに保存する関数
+ * @param {number} beats - 1小節の拍の数（0 は「なし」）
+ */
+export function saveMetronomeBeats(beats) {
+  localStorage.setItem(METRONOME_BEATS_KEY, String(beats));
+}

@@ -235,3 +235,52 @@ export function playClick() {
   oscillator.start(now);
   oscillator.stop(now + CLICK_DURATION);
 }
+
+// ===== メトロノームのページで使う、時刻を決めて鳴らす音 =====
+
+// 1拍目（アクセント）の音の高さ（Hz）。ふつうの拍（1000Hz）より高くして、区別できるようにする
+const ACCENT_CLICK_FREQUENCY = 1500;
+
+/**
+ * 音の時計の、今の時刻を返す関数
+ * 音の時計は、音を扱う土台（AudioContext）が動きはじめてからの秒数。
+ * 音を「何秒の時点で鳴らす」と予約するときの、基準になる。
+ * ブラウザの決まりで、ボタンを押したときの処理の中から、最初に呼ぶこと。
+ * @returns {number} 今の時刻（秒）
+ */
+export function getAudioTime() {
+  return getAudioContext().currentTime;
+}
+
+/**
+ * メトロノームの音（短い「コッ」という音）を、決めた時刻に鳴らす予約をする関数
+ * その場で鳴らす playClick と違い、少し先の時刻を決めて予約するので、正確な間隔で鳴らせる。
+ * @param {number} time - 鳴らす時刻（音の時計での秒数。getAudioTime で分かる今の時刻より、あとの時刻）
+ * @param {boolean} isAccent - true のときは、1拍目用の高い音にする
+ */
+export function scheduleClick(time, isAccent) {
+  // 音を鳴らすための土台（AudioContext）を取り出す
+  const context = getAudioContext();
+
+  // 音のもと（発振器）を作る。sine は、まるい音の波
+  const oscillator = context.createOscillator();
+  oscillator.type = "sine";
+
+  // 1拍目は高い音、それ以外はふつうの高さにする
+  oscillator.frequency.value = isAccent ? ACCENT_CLICK_FREQUENCY : CLICK_FREQUENCY;
+
+  // 音量を調節する部品を作る
+  const gain = context.createGain();
+
+  // 鳴らす時刻に決めた音量ではじめて、すぐに小さくしていく（「コッ」と短く切れる音になる）
+  gain.gain.setValueAtTime(CLICK_VOLUME, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + CLICK_DURATION);
+
+  // 発振器 → 音量 → スピーカー の順につなぐ
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+
+  // 決めた時刻に鳴らしはじめて、決めた長さで止める予約をする
+  oscillator.start(time);
+  oscillator.stop(time + CLICK_DURATION);
+}
