@@ -376,18 +376,24 @@
     cursor: not-allowed;
   }
 
-  /* 名前の入力欄とボタンを横に並べる */
+  /* 名前の入力欄とボタン：1行目に入力欄、2行目にボタンを並べる */
   .name-form {
     display: flex;
+    /* 入りきらないものは、次の行に折り返す */
+    flex-wrap: wrap;
+    /* 2行目のボタンを、右に寄せる */
+    justify-content: flex-end;
     gap: 6px;
     margin-bottom: 8px;
   }
 
-  /* 名前の入力欄：残りの横幅いっぱいに広げる */
+  /* 名前の入力欄：1行をまるごと使う（横幅いっぱい。ボタンは次の行に折り返される） */
   .name-input {
-    flex: 1;
+    flex: 1 1 100%;
     min-width: 0;
-    padding: 6px 8px;
+    /* 枠と内側の余白を、幅の中に含める（横幅いっぱいにしたときに、はみ出さないようにする） */
+    box-sizing: border-box;
+    padding: 8px;
     /* 文字が 16px より小さいと、スマホで入力欄を押したときに画面が勝手に拡大されることがあるので、1rem にする */
     font-size: 1rem;
     border: 1px solid #bdbdbd;
