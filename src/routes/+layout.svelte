@@ -22,6 +22,12 @@
 
 <svelte:head>
   <link rel="icon" href={favicon} />
+
+  <!-- iPhone などで「ホーム画面に追加」したときのアイコン（static フォルダの apple-touch-icon.png） -->
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+  <!-- ホーム画面で、アイコンの下に出る名前（長いと途中で切れるので、短くしてある） -->
+  <meta name="apple-mobile-web-app-title" content="音程チェック" />
 </svelte:head>
 
 {@render children()}
