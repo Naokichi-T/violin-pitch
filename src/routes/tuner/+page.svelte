@@ -21,6 +21,12 @@
   // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む（お手本の音に使う）
   import { playTone, stopTone } from "#lib/audio.js";
 
+  // 基準の音（ラ4 の高さ）を読む関数・変える関数と、選べる範囲を読み込む
+  import { getReferenceFrequency, setReferenceFrequency, REFERENCE_FREQUENCY_MIN, REFERENCE_FREQUENCY_MAX } from "#lib/reference.svelte.js";
+
+  // 基準の音をブラウザに保存する関数を読み込む
+  import { saveReferenceFrequency } from "#lib/settings.js";
+
   // ズレを針で表示するメーターの部品を読み込む
   import Meter from "#lib/Meter.svelte";
 
@@ -45,10 +51,6 @@
   // お手本の音が鳴り終わってから、判定を再開するまでの待ち時間（ミリ秒）
   // （マイクに残っているお手本の音を、弾いた音とまちがえないようにするため）
   const WAIT_AFTER_REFERENCE_MILLISECONDS = 300;
-
-  // 4本の弦それぞれの、合わせる高さ（Hz）。STRINGS と同じ順番（G・D・A・E）に並ぶ
-  // 開放弦の高さは、基準の音（ラ4）から5度ずつ合わせた高さ。練習モードと同じ関数から求める
-  const STRING_FREQUENCIES = STRINGS.map((string) => getOpenStringFrequency(string.openNote));
 
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
@@ -77,6 +79,14 @@
 
   // ===== 上の値から自動で計算される値（$derived を付けると、元の値が変わるたびに計算し直される） =====
 
+  // 今の基準の音（ラ4 の周波数）。設定を変えると、自動で新しい値になる
+  let referenceFrequency = $derived(getReferenceFrequency());
+
+  // 4本の弦それぞれの、合わせる高さ（Hz）。STRINGS と同じ順番（G・D・A・E）に並ぶ
+  // 開放弦の高さは、基準の音（ラ4）から5度ずつ合わせた高さ。練習モードと同じ関数から求める
+  // （基準の音が変わると、自動で計算し直される）
+  let stringFrequencies = $derived(STRINGS.map((string) => getOpenStringFrequency(string.openNote)));
+
   // 今の音の、音名とズレの情報。音が出ていないときは null
   let note = $derived(frequency !== null ? frequencyToNote(frequency) : null);
 
@@ -85,7 +95,7 @@
   let targetIndex = $derived(selectedStringId === AUTO_ID ? autoStringIndex : STRINGS.findIndex((string) => string.id === selectedStringId));
 
   // 合わせる高さ（Hz）
-  let targetFrequency = $derived(STRING_FREQUENCIES[targetIndex]);
+  let targetFrequency = $derived(stringFrequencies[targetIndex]);
 
   // 合わせる高さからのズレ（セント）。プラスは高い、マイナスは低い。音が出ていないときは null
   let cents = $derived(frequency !== null ? getCents(frequency, targetFrequency) : null);
@@ -128,7 +138,7 @@
     let nearestIndex = 0;
     let nearestDistance = Infinity;
 
-    STRING_FREQUENCIES.forEach((stringFrequency, index) => {
+    stringFrequencies.forEach((stringFrequency, index) => {
       // ズレの大きさ（高い・低いは区別しないので、Math.abs でマイナスを外す）
       const distance = Math.abs(getCents(measured, stringFrequency));
 
@@ -215,6 +225,22 @@
   function selectString(id) {
     stopReference();
     selectedStringId = id;
+  }
+
+  /**
+   * 基準の音（ラ4 の高さ）を変える関数
+   * 「−」「＋」のボタンを押したときに呼ばれる。変えた値は、ブラウザに保存する。
+   * @param {number} difference - 今の値に足す数（−1 なら 1Hz 下げる、1 なら 1Hz 上げる）
+   */
+  function changeReference(difference) {
+    // お手本の音が鳴っている途中なら止める（変える前の高さの音が鳴り続けないようにするため）
+    stopReference();
+
+    // 基準の音を変える（範囲からはみ出す値は、setReferenceFrequency が端の値に直してくれる）
+    setReferenceFrequency(referenceFrequency + difference);
+
+    // 変えたあとの値を、ブラウザに保存する（次に開いたときも、同じ設定になる）
+    saveReferenceFrequency(getReferenceFrequency());
   }
 
   /**
@@ -354,11 +380,27 @@
     {/if}
   </section>
 
+  <!-- ===== 基準の音：ラ4 を何Hz にするかを決める ===== -->
+  <section class="panel">
+    <h2>基準の音</h2>
+
+    <!-- 「−」のボタン、今の値、「＋」のボタンを横に並べる -->
+    <div class="reference-row">
+      <!-- disabled を付けると、ボタンが押せなくなる（範囲の端まで来たとき） -->
+      <button class="step" aria-label="基準の音を1Hz下げる" disabled={referenceFrequency <= REFERENCE_FREQUENCY_MIN} onclick={() => changeReference(-1)}>−</button>
+      <span class="reference-value">ラ＝{referenceFrequency} Hz</span>
+      <button class="step" aria-label="基準の音を1Hz上げる" disabled={referenceFrequency >= REFERENCE_FREQUENCY_MAX} onclick={() => changeReference(1)}>＋</button>
+    </div>
+
+    <p class="reference-note">お手本の音・練習の判定・指板の図など、アプリ全体の音の高さが変わります。</p>
+  </section>
+
   <p class="note">
-    合わせる高さは、ラ＝{STRING_FREQUENCIES[2].toFixed(0)}Hz から、となりの弦と5度ずつ合わせた高さです。<br />
+    合わせる高さは、基準の音（ラ＝{referenceFrequency}Hz）から、となりの弦と5度ずつ合わせた高さです。<br />
     「自動」は、鳴っている音に一番近い弦を選びます。弦のボタンを押すと、その弦に固定できます。<br />
     合わせる高さから ±{TOLERANCE} セント以内で「OK」になります。メーターの左右の端は ±{METER_RANGE} セントです。<br />
-    お手本の音は {REFERENCE_SECONDS} 秒鳴ります。鳴っている間は、判定を止めています。
+    お手本の音は {REFERENCE_SECONDS} 秒鳴ります。鳴っている間は、判定を止めています。<br />
+    基準の音は、{REFERENCE_FREQUENCY_MIN}〜{REFERENCE_FREQUENCY_MAX}Hz の範囲で選べます。設定は、このブラウザに保存されます。
   </p>
 </main>
 
@@ -420,7 +462,7 @@
     margin: 12px 0 0 0;
   }
 
-  /* 「今の音」「調弦」のまとまり：薄い枠で囲む */
+  /* 「今の音」「調弦」「基準の音」のまとまり：薄い枠で囲む */
   .panel {
     margin-top: 14px;
     padding: 12px;
@@ -567,6 +609,52 @@
   button.reference.playing {
     color: white;
     background-color: #2e7d32;
+  }
+
+  /* 基準の音：「−」のボタン、今の値、「＋」のボタンを横に並べて、中央に寄せる */
+  .reference-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  /* 「−」「＋」のボタン：指で押しやすい、四角いボタンにする */
+  button.step {
+    width: 48px;
+    height: 44px;
+    font-size: 1.4rem;
+    font-weight: bold;
+    color: #1976d2;
+    background-color: white;
+    border: 2px solid #1976d2;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  /* 「−」「＋」のボタン（押せないとき）：グレーにする */
+  button.step:disabled {
+    color: #bdbdbd;
+    border-color: #bdbdbd;
+    cursor: default;
+  }
+
+  /* 基準の音の、今の値 */
+  .reference-value {
+    /* 値が変わっても、ボタンの位置が動かないように、幅を決めておく */
+    min-width: 7.5em;
+    font-size: 1.3rem;
+    font-weight: bold;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 基準の音の説明：小さくグレーで表示する */
+  .reference-note {
+    margin: 8px 0 0 0;
+    font-size: 0.8rem;
+    color: #616161;
+    text-align: center;
   }
 
   /* 注意書き：小さくグレーで表示する */
