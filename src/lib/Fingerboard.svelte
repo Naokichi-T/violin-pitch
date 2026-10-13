@@ -13,11 +13,12 @@
   // position  ：ポジションの番号（1〜7）
   // labelMode ：印の中に書くもの（"name"：音名、"finger"：指番号）
   // selectedId：選択中の印の id（getMarkerId で作る文字）。選択していないときは null
+  // heldIds   ：指で押さえている印の id の一覧（重音のとき、いくつも入る）。押さえていないときは空の一覧
   // onselect  ：印がマウスでクリックされたとき（またはキーボードで選ばれたとき）に呼ぶ関数。その印のデータを渡す
   // onpress   ：印が指で押されたとき（スマホなど）に呼ぶ関数。その印のデータと、押した指の番号を渡す
   // onrelease ：印を押していた指が離れたときに呼ぶ関数。離れた指の番号を渡す
-  // selectedId・onselect・onpress・onrelease は、渡されなかったときのための初期値を決めておく
-  let { key, position, labelMode, selectedId = null, onselect = () => {}, onpress = () => {}, onrelease = () => {} } = $props();
+  // selectedId・heldIds・onselect・onpress・onrelease は、渡されなかったときのための初期値を決めておく
+  let { key, position, labelMode, selectedId = null, heldIds = [], onselect = () => {}, onpress = () => {}, onrelease = () => {} } = $props();
 
   // 指が離れたあと、この時間（ミリ秒）のあいだに届いたクリックは無視する
   // （スマホでは、指を離した直後に、ブラウザが「クリックされた」という知らせも送ってくるため。
@@ -246,7 +247,7 @@
       class:open={marker.semitones === 0}
       class:tonic={marker.isTonic}
       class:outside={!marker.inScale}
-      class:selected={getMarkerId(marker) === selectedId}
+      class:selected={getMarkerId(marker) === selectedId || heldIds.includes(getMarkerId(marker))}
       transform="translate({getStringX(marker.stringIndex)} {getMarkerY(marker.semitones)})"
       role="button"
       tabindex="0"
@@ -292,9 +293,10 @@
     -webkit-user-select: none;
     /* 指で長押ししたときに、ブラウザのメニュー（コピーなど）が出ないようにする（iPhone 用） */
     -webkit-touch-callout: none;
-    /* 図の上で指を動かしたとき、ブラウザに任せるのは「縦のスクロール」と「2本指の拡大・縮小」だけにする */
+    /* 図の上で指を動かしたとき、ブラウザに任せるのは「縦のスクロール」だけにする */
     /* （こうしておくと、押している指が少し横にずれても、音が止まらない） */
-    touch-action: pan-y pinch-zoom;
+    /* 2本指の拡大・縮小もできないようにする（重音を鳴らすために2本指で押したとき、画面が拡大されないようにするため） */
+    touch-action: pan-y;
   }
 
   /* 指板の板：黒檀（こくたん）のような、黒っぽい茶色 */

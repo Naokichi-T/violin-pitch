@@ -77,12 +77,20 @@
   const HOLD_MIN_SECONDS = 0.3;
 
   // 指で押している音の一覧（画面には表示しないので $state は付けない）
-  // キーは指の番号（ブラウザが指1本ごとに付ける番号）、値は { marker：押している印、voice：鳴らしている音 }
+  // キーは指の番号（ブラウザが指1本ごとに付ける番号）、値は { marker：押している印、voice：鳴らしている音、frequency：鳴らしている周波数（Hz） }
   // Map は、「キー → 値」の組をいくつもためておける入れ物
   const holds = new Map();
 
+  // 指で押さえている音の一覧（画面に表示するためのもの）。holds が変わるたびに、作り直す
+  // 1つぶんは { marker：押さえている印、frequency：鳴らしている周波数（Hz） }。低い音から順に並べる
+  let heldNotes = $state([]);
+
+  // 指で押さえている印の id の一覧。図の中で、押さえている印を全部目立たせるために渡す
+  let heldIds = $derived(heldNotes.map((held) => getMarkerId(held.marker)));
+
   // 選択中の印の id（押していないときは null）。図の中で、その印を目立たせるために渡す
-  let selectedId = $derived(selectedMarker === null ? null : getMarkerId(selectedMarker));
+  // 指で押さえている音があるときは、押さえている印（heldIds）だけを目立たせるので、null にする
+  let selectedId = $derived(selectedMarker === null || heldNotes.length > 0 ? null : getMarkerId(selectedMarker));
 
   // 選択中の調のデータ
   // $derived を付けると、keyId が変わるたびに自動で探し直される
@@ -186,7 +194,8 @@
   /**
    * 印が指で押されたとき（スマホなど）に、その音を鳴らしはじめる関数
    * 指が離れるまで鳴らし続ける（離れたときの処理は stopHold）。
-   * 指ごとに別の音として鳴らすので、ほかの指で押している音は止めない。
+   * 指ごとに別の音として鳴らすので、ほかの指で押している音は止めない（重音になる）。
+   * ただし、同じ弦をほかの指で押していたときは、その音を止めて置きかえる。
    * @param {object} marker - 押された印のデータ
    * @param {number} pointerId - 押した指の番号
    */
@@ -194,12 +203,25 @@
     // 同じ指の音が、まだ残っていたら止める（念のため）
     stopHold(pointerId);
 
+    // 同じ弦を、ほかの指で押さえていたら、その音を止めて置きかえる
+    // （本物のバイオリンと同じく、1本の弦では、1つの音しか鳴らせないため）
+    // その指が、あとで離れたときは、一覧にもう無いので、stopHold は何もしない
+    holds.forEach((hold, otherPointerId) => {
+      if (hold.marker.stringIndex === marker.stringIndex) {
+        stopVoice(hold.voice);
+        holds.delete(otherPointerId);
+      }
+    });
+
     // 上限の長さで鳴らしはじめる（指が離れたら、stopHold で途中で止める）
     const frequency = getMarkerFrequency(marker);
     const voice = startVoice(frequency, HOLD_MAX_SECONDS);
 
     // どの指で、どの印を押して、どの音を鳴らしているかを覚えておく
-    holds.set(pointerId, { marker: marker, voice: voice });
+    holds.set(pointerId, { marker: marker, voice: voice, frequency: frequency });
+
+    // 画面の表示を作り直す
+    updateHeldNotes();
 
     // どの印を押したかと、鳴らした周波数を覚えておく（図の印を目立たせて、下に周波数を表示する）
     selectedMarker = marker;
@@ -223,6 +245,25 @@
     // 一覧から外して、音を止める（最低の長さは鳴らす）
     holds.delete(pointerId);
     stopVoice(hold.voice, HOLD_MIN_SECONDS);
+
+    // 押さえている音が1つだけ残ったときは、下の表示を、その音の詳しい表示にする
+    if (holds.size === 1) {
+      const remaining = [...holds.values()][0];
+      selectedMarker = remaining.marker;
+      playedFrequency = remaining.frequency;
+    }
+
+    // 画面の表示を作り直す
+    updateHeldNotes();
+  }
+
+  /**
+   * 指で押さえている音の一覧（画面に表示するためのもの）を、作り直す関数
+   * holds に入っている音を、周波数の低い順に並べる。
+   */
+  function updateHeldNotes() {
+    // [...holds.values()] で、Map の値だけを取り出して、ふつうの配列にする
+    heldNotes = [...holds.values()].map((hold) => ({ marker: hold.marker, frequency: hold.frequency })).sort((a, b) => a.frequency - b.frequency);
   }
 </script>
 
@@ -290,8 +331,11 @@
   </div>
 
   <!-- 押した音の表示：まだ押していないときは、押せることを案内する -->
+  <!-- 2つ以上を押さえているとき（重音）は、音名と周波数だけを、低い順に1行で並べる -->
   <p class="played-info">
-    {#if selectedMarker === null}
+    {#if heldNotes.length >= 2}
+      {heldNotes.map((held) => noteToText(held.marker.note) + "(" + held.frequency.toFixed(1) + ")").join(" ・ ")}
+    {:else if selectedMarker === null}
       印や点を押すと、音が鳴ります
     {:else}
       <!-- どの弦の、何の音か -->
@@ -308,7 +352,8 @@
   <!-- 指板の図（調・ポジション・印の中に書くもの・選択中の印を渡す） -->
   <!-- マウスでクリックされたら playMarker（短く鳴らす）を呼んでもらう -->
   <!-- 指で押されたら startHold（鳴らしはじめる）、指が離れたら stopHold（止める）を呼んでもらう -->
-  <Fingerboard key={currentKey} position={positionId} {labelMode} {selectedId} onselect={playMarker} onpress={startHold} onrelease={stopHold} />
+  <!-- heldIds は、指で押さえている印の一覧（重音のとき、押さえている印を全部目立たせる） -->
+  <Fingerboard key={currentKey} position={positionId} {labelMode} {selectedId} {heldIds} onselect={playMarker} onpress={startHold} onrelease={stopHold} />
 
   <!-- 図の見方 -->
   <ul class="legend">
@@ -439,6 +484,11 @@
     color: #616161;
     /* 数字の幅をそろえて、値が変わっても表示が左右に揺れないようにする */
     font-variant-numeric: tabular-nums;
+    /* いつも1行にする（行が増えて、下の指板の図がずれないようにするため） */
+    white-space: nowrap;
+    /* 1行に入りきらないときは、はみ出した部分を隠して、最後を「…」にする */
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* 押した音の、弦と音名：黒い太字 */
