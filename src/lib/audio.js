@@ -305,3 +305,90 @@ export function isAudioRunning() {
 export function unlockAudio() {
   getAudioContext();
 }
+
+// ===== いくつも同時に鳴らせる音（指板の図の重音に使う） =====
+
+// 同時に鳴らす音1つぶんの大きさ（0〜1）
+// 4つ同時に鳴らしても音が割れないように、playTone の音（0.2）より少し小さくする
+const VOICE_VOLUME = 0.15;
+
+// 音を止めるとき、音量がなめらかに小さくなっていく速さ（秒）
+// この時間で、音量がおよそ 3分の1 になる。0.02 なら、0.1秒ほどでほぼ聞こえなくなる
+const VOICE_FADE_TIME_CONSTANT = 0.02;
+
+// 音量を下げはじめてから、音を作る部品を止めるまでの時間（秒）
+const VOICE_STOP_DELAY = 0.15;
+
+/**
+ * 音を1つ鳴らしはじめて、その音を返す関数
+ * playTone と違い、前の音を止めないので、いくつも同時に鳴らせる。
+ * 止めるときは、返ってきた音を stopVoice に渡す。
+ * @param {number} frequency - 鳴らす音の周波数（Hz）
+ * @param {number} maxSeconds - 鳴らす長さの上限（秒）。stopVoice で止めなくても、この長さで止まる
+ * @returns {{oscillator: OscillatorNode, gain: GainNode, startTime: number}} 鳴らしはじめた音
+ *   oscillator：音を作る部品、gain：音量を決める部品、startTime：鳴らしはじめた時刻（音の時計での秒数）
+ */
+export function startVoice(frequency, maxSeconds) {
+  // 音を扱う土台を用意する
+  const context = getAudioContext();
+
+  // 今の時刻（AudioContext が動きはじめてからの秒数）
+  const now = context.currentTime;
+
+  // ----- 音を作る部品：playTone と同じ「のこぎり波」 -----
+  const oscillator = context.createOscillator();
+  oscillator.type = "sawtooth";
+  oscillator.frequency.value = frequency;
+
+  // ----- 音をやわらかくする部品：playTone と同じく、高い倍音を弱める -----
+  const filter = context.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = FILTER_FREQUENCY;
+
+  // ----- 音量を決める部品 -----
+  const gain = context.createGain();
+
+  // 音量を 0 からはじめて、短い時間で決めた大きさまで上げる
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(VOICE_VOLUME, now + ATTACK_TIME);
+
+  // 上限の長さの少し前まで音量を保ち、最後に 0 まで下げる
+  gain.gain.setValueAtTime(VOICE_VOLUME, now + maxSeconds - RELEASE_TIME);
+  gain.gain.linearRampToValueAtTime(0, now + maxSeconds);
+
+  // ----- 部品をつなぐ：音を作る → やわらかくする → 音量を決める → スピーカー -----
+  oscillator.connect(filter);
+  filter.connect(gain);
+  gain.connect(context.destination);
+
+  // 鳴らしはじめる時刻と、上限の長さで止める時刻を予約する
+  oscillator.start(now);
+  oscillator.stop(now + maxSeconds);
+
+  return { oscillator: oscillator, gain: gain, startTime: now };
+}
+
+/**
+ * startVoice で鳴らした音を止める関数
+ * 鳴らしはじめてから minSeconds 秒たっていないときは、そこまで鳴らしてから止める。
+ * 音量をなめらかに下げてから止めるので、「プツッ」という雑音が出にくい。
+ * ブラウザがまだ音を出せない状態だったときは、ここで出せる状態にする（指を離したときに呼ぶので、出せるようになる）。
+ * @param {{oscillator: OscillatorNode, gain: GainNode, startTime: number}} voice - startVoice が返した音
+ * @param {number} minSeconds - 最低でも鳴らす長さ（秒）。指定しないときは 0（すぐに止める）
+ */
+export function stopVoice(voice, minSeconds = 0) {
+  // 音を扱う土台を用意する（止まっていれば、ここで動かす）
+  const context = getAudioContext();
+
+  // 音量を下げはじめる時刻：「今」と「鳴らしはじめてから minSeconds 秒後」の、遅いほう
+  const stopTime = Math.max(context.currentTime, voice.startTime + minSeconds);
+
+  // 予約してあった音量の変化のうち、下げはじめる時刻より後のもの（上限の長さで止める予定など）を取り消す
+  voice.gain.gain.cancelScheduledValues(stopTime);
+
+  // 下げはじめる時刻から、音量をなめらかに 0 に近づける
+  voice.gain.gain.setTargetAtTime(0, stopTime, VOICE_FADE_TIME_CONSTANT);
+
+  // 音量が十分に下がったころに、音を作る部品を止める
+  voice.oscillator.stop(stopTime + VOICE_STOP_DELAY);
+}

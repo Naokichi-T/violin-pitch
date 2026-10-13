@@ -14,8 +14,8 @@
   // labelMode ：印の中に書くもの（"name"：音名、"finger"：指番号）
   // selectedId：選択中の印の id（getMarkerId で作る文字）。選択していないときは null
   // onselect  ：印がマウスでクリックされたとき（またはキーボードで選ばれたとき）に呼ぶ関数。その印のデータを渡す
-  // onpress   ：印が指で押されたとき（スマホなど）に呼ぶ関数。その印のデータを渡す
-  // onrelease ：印を押していた指が離れたときに呼ぶ関数
+  // onpress   ：印が指で押されたとき（スマホなど）に呼ぶ関数。その印のデータと、押した指の番号を渡す
+  // onrelease ：印を押していた指が離れたときに呼ぶ関数。離れた指の番号を渡す
   // selectedId・onselect・onpress・onrelease は、渡されなかったときのための初期値を決めておく
   let { key, position, labelMode, selectedId = null, onselect = () => {}, onpress = () => {}, onrelease = () => {} } = $props();
 
@@ -134,7 +134,7 @@
 
     // どの指で押しているかを覚えて、押されたことを伝える
     pressingPointerId = event.pointerId;
-    onpress(marker);
+    onpress(marker, event.pointerId);
   }
 
   /**
@@ -152,7 +152,7 @@
     pressingPointerId = null;
     lastReleaseTime = performance.now();
 
-    onrelease();
+    onrelease(event.pointerId);
   }
 
   /**

@@ -13,7 +13,7 @@
   import { TEMPERAMENTS, DEFAULT_TEMPERAMENT_ID, getFrequency, getOpenStringFrequency } from "#lib/tuning.js";
 
   // 指定した周波数の音を鳴らす関数と、鳴っている音を止める関数を読み込む
-  import { playTone, stopTone, isAudioRunning, unlockAudio } from "#lib/audio.js";
+  import { playTone, stopTone, startVoice, stopVoice, unlockAudio } from "#lib/audio.js";
 
   // 今の基準の音（ラ4 の周波数）を返す関数を読み込む（注意書きに表示するために使う）
   import { getReferenceFrequency } from "#lib/reference.svelte.js";
@@ -72,15 +72,14 @@
   // 指が離れたことをスマホが伝えそこねたときに、鳴りっぱなしになるのを防ぐ
   const HOLD_MAX_SECONDS = 30;
 
-  // 軽くタップしただけのときでも、最低これだけは鳴らす長さ（ミリ秒）
+  // 軽くタップしただけのときでも、最低これだけは鳴らす長さ（秒）
   // ピチカート（弦を指ではじく弾き方）のような、短い音になる
-  const HOLD_MIN_MILLISECONDS = 300;
+  const HOLD_MIN_SECONDS = 0.3;
 
-  // 指で押して鳴らしはじめた時刻（ミリ秒）
-  let holdStartTime = 0;
-
-  // 「少し待ってから音を止める」予約の番号（予約していないときは null）
-  let stopTimerId = null;
+  // 指で押している音の一覧（画面には表示しないので $state は付けない）
+  // キーは指の番号（ブラウザが指1本ごとに付ける番号）、値は { marker：押している印、voice：鳴らしている音 }
+  // Map は、「キー → 値」の組をいくつもためておける入れ物
+  const holds = new Map();
 
   // 選択中の印の id（押していないときは null）。図の中で、その印を目立たせるために渡す
   let selectedId = $derived(selectedMarker === null ? null : getMarkerId(selectedMarker));
@@ -133,7 +132,10 @@
   // このページが画面から消えるときに、鳴っている音を止める
   // （止めないと、別のページに移っても音が鳴り続けてしまうため）
   onDestroy(() => {
-    cancelStopTimer();
+    // 指で押している音を、全部すぐに止める
+    holds.forEach((hold) => stopVoice(hold.voice));
+    holds.clear();
+
     stopTone();
   });
 
@@ -168,104 +170,59 @@
   }
 
   /**
-   * 「少し待ってから音を止める」予約を取り消す関数
-   * 予約が残ったままだと、次に鳴らした音が、途中で止められてしまうため。
-   * 予約していないときは、何もしない。
-   */
-  function cancelStopTimer() {
-    if (stopTimerId !== null) {
-      clearTimeout(stopTimerId);
-      stopTimerId = null;
-    }
-  }
-
-  /**
-   * 印の音を、決めた長さで鳴らしはじめる関数
-   * どの印を押したかと、鳴らした周波数も覚えておく（図の印を目立たせて、下に周波数を表示する）。
-   * @param {object} marker - 印のデータ
-   * @param {number|undefined} duration - 鳴らす長さ（秒）。undefined のときは、playTone の決まった長さ（0.8秒）
-   */
-  function startMarkerTone(marker, duration) {
-    // 前の音を止める予約が残っていれば、取り消す
-    cancelStopTimer();
-
-    // 音を鳴らす
-    const frequency = getMarkerFrequency(marker);
-    playTone(frequency, duration);
-
-    // どの印を押したかと、鳴らした周波数を覚えておく
-    selectedMarker = marker;
-    playedFrequency = frequency;
-  }
-
-  /**
    * 印がマウスでクリックされたとき（またはキーボードで選ばれたとき）に、その音を短く鳴らす関数
    * @param {object} marker - 押された印のデータ
    */
   function playMarker(marker) {
     // 長さを渡さないので、決まった長さ（0.8秒）で鳴る
-    startMarkerTone(marker, undefined);
+    const frequency = getMarkerFrequency(marker);
+    playTone(frequency);
+
+    // どの印を押したかと、鳴らした周波数を覚えておく（図の印を目立たせて、下に周波数を表示する）
+    selectedMarker = marker;
+    playedFrequency = frequency;
   }
-
-  // 指で押しはじめたときに、まだ音を出せない状態だったかどうか
-  // （ページを開いて最初の操作のとき。ブラウザは、指を離すなどの操作があるまで、音を出させてくれない）
-  let wasSilentHold = false;
-
-  // 指で押している印のデータ（押していないときは null）。指を離したときに、音を鳴らし直すために覚えておく
-  let holdingMarker = null;
 
   /**
    * 印が指で押されたとき（スマホなど）に、その音を鳴らしはじめる関数
    * 指が離れるまで鳴らし続ける（離れたときの処理は stopHold）。
+   * 指ごとに別の音として鳴らすので、ほかの指で押している音は止めない。
    * @param {object} marker - 押された印のデータ
+   * @param {number} pointerId - 押した指の番号
    */
-  function startHold(marker) {
-    // 今、音を出せる状態かどうかを覚えておく（出せないのは、ページを開いて最初の操作のとき）
-    wasSilentHold = !isAudioRunning();
-    holdingMarker = marker;
+  function startHold(marker, pointerId) {
+    // 同じ指の音が、まだ残っていたら止める（念のため）
+    stopHold(pointerId);
 
     // 上限の長さで鳴らしはじめる（指が離れたら、stopHold で途中で止める）
-    startMarkerTone(marker, HOLD_MAX_SECONDS);
+    const frequency = getMarkerFrequency(marker);
+    const voice = startVoice(frequency, HOLD_MAX_SECONDS);
 
-    // 鳴らしはじめた時刻を覚えておく
-    holdStartTime = performance.now();
+    // どの指で、どの印を押して、どの音を鳴らしているかを覚えておく
+    holds.set(pointerId, { marker: marker, voice: voice });
+
+    // どの印を押したかと、鳴らした周波数を覚えておく（図の印を目立たせて、下に周波数を表示する）
+    selectedMarker = marker;
+    playedFrequency = frequency;
   }
 
   /**
-   * 印を押していた指が離れたときに、音を止める関数
-   * 鳴らしはじめてからの時間が短すぎるときは、最低の長さになるまで待ってから止める。
-   * ページを開いて最初の操作で、押している間に鳴らせなかったときは、ここで短く鳴らす。
+   * 印を押していた指が離れたときに、その指の音を止める関数
+   * 鳴らしはじめてから 0.3秒たっていないときは、0.3秒まで鳴らしてから止める。
+   * ページを開いて最初の操作で、押している間に音を出せなかったときも、指を離したここで 0.3秒鳴る
+   * （指を離したときなら、ブラウザが音を出させてくれるため）。
+   * @param {number} pointerId - 離れた指の番号
    */
-  function stopHold() {
-    // 押しはじめたときに音を出せない状態だったとき（ページを開いて最初の操作のとき）は、
-    // 押している間は鳴らせなかったので、指を離した今、短く鳴らす
-    // （指を離したときなら、ブラウザが音を出させてくれる）
-    if (wasSilentHold && holdingMarker !== null) {
-      wasSilentHold = false;
-      startMarkerTone(holdingMarker, HOLD_MIN_MILLISECONDS / 1000);
-      holdingMarker = null;
-      return;
-    }
-    holdingMarker = null;
-
-    // 鳴らしはじめてから、どれだけたったか（ミリ秒）
-    const elapsed = performance.now() - holdStartTime;
-
-    // 最低の長さまで、あとどれだけ残っているか（ミリ秒）
-    const remaining = HOLD_MIN_MILLISECONDS - elapsed;
-
-    if (remaining <= 0) {
-      // もう十分に鳴らしたので、すぐに止める
-      stopTone();
+  function stopHold(pointerId) {
+    // その指で鳴らしている音を探す。なければ、何もしない
+    const hold = holds.get(pointerId);
+    if (hold === undefined) {
       return;
     }
 
-    // まだ短いので、残りの時間だけ待ってから止める
-    cancelStopTimer();
-    stopTimerId = setTimeout(() => {
-      stopTimerId = null;
-      stopTone();
-    }, remaining);
+    // 一覧から外して、音を止める（最低の長さは鳴らす）
+    holds.delete(pointerId);
+    stopVoice(hold.voice, HOLD_MIN_SECONDS);
   }
 </script>
 
