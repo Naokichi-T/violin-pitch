@@ -76,21 +76,27 @@
   // ピチカート（弦を指ではじく弾き方）のような、短い音になる
   const HOLD_MIN_SECONDS = 0.3;
 
-  // 指で押している音の一覧（画面には表示しないので $state は付けない）
-  // キーは指の番号（ブラウザが指1本ごとに付ける番号）、値は { marker：押している印、voice：鳴らしている音、frequency：鳴らしている周波数（Hz） }
+  // 指で押さえている印の一覧（画面には表示しないので $state は付けない）
+  // キーは指の番号（ブラウザが指1本ごとに付ける番号）、値はその指で押さえている印のデータ
   // Map は、「キー → 値」の組をいくつもためておける入れ物
   const holds = new Map();
 
-  // 指で押さえている音の一覧（画面に表示するためのもの）。holds が変わるたびに、作り直す
-  // 1つぶんは { marker：押さえている印、frequency：鳴らしている周波数（Hz） }。低い音から順に並べる
-  let heldNotes = $state([]);
+  // 弦ごとに、今鳴らしている音の一覧（画面には表示しないので $state は付けない）
+  // キーは弦の番号（0 が G線、3 が E線）、値は { marker：鳴らしている印、voice：鳴らしている音、frequency：周波数（Hz） }
+  // 1本の弦では、1つの音しか鳴らさない（同じ弦を2本以上の指で押さえているときは、一番高い音だけを鳴らす）
+  const voices = new Map();
 
   // 指で押さえている印の id の一覧。図の中で、押さえている印を全部目立たせるために渡す
-  let heldIds = $derived(heldNotes.map((held) => getMarkerId(held.marker)));
+  // （同じ弦で、高い音に隠れて鳴っていない指も含む。指を置いている場所が分かるようにするため）
+  let heldIds = $state([]);
+
+  // 今鳴っている音の一覧（画面に表示するためのもの）。低い音から順に並べる
+  // 1つぶんは { marker：鳴らしている印、frequency：周波数（Hz） }
+  let soundingNotes = $state([]);
 
   // 選択中の印の id（押していないときは null）。図の中で、その印を目立たせるために渡す
-  // 指で押さえている音があるときは、押さえている印（heldIds）だけを目立たせるので、null にする
-  let selectedId = $derived(selectedMarker === null || heldNotes.length > 0 ? null : getMarkerId(selectedMarker));
+  // 指で押さえている印があるときは、押さえている印（heldIds）だけを目立たせるので、null にする
+  let selectedId = $derived(selectedMarker === null || heldIds.length > 0 ? null : getMarkerId(selectedMarker));
 
   // 選択中の調のデータ
   // $derived を付けると、keyId が変わるたびに自動で探し直される
@@ -140,8 +146,9 @@
   // このページが画面から消えるときに、鳴っている音を止める
   // （止めないと、別のページに移っても音が鳴り続けてしまうため）
   onDestroy(() => {
-    // 指で押している音を、全部すぐに止める
-    holds.forEach((hold) => stopVoice(hold.voice));
+    // 鳴らしている音を、全部すぐに止める
+    voices.forEach((sounding) => stopVoice(sounding.voice));
+    voices.clear();
     holds.clear();
 
     stopTone();
@@ -192,78 +199,104 @@
   }
 
   /**
-   * 印が指で押されたとき（スマホなど）に、その音を鳴らしはじめる関数
-   * 指が離れるまで鳴らし続ける（離れたときの処理は stopHold）。
-   * 指ごとに別の音として鳴らすので、ほかの指で押している音は止めない（重音になる）。
-   * ただし、同じ弦をほかの指で押していたときは、その音を止めて置きかえる。
+   * 印が指で押されたとき（スマホなど）に呼ばれる関数
+   * 押さえた指を覚えて、その弦で鳴らす音を決め直す（離れたときの処理は stopHold）。
+   * 弦ごとに別の音として鳴らすので、ほかの弦の音は止めない（重音になる）。
    * @param {object} marker - 押された印のデータ
    * @param {number} pointerId - 押した指の番号
    */
   function startHold(marker, pointerId) {
-    // 同じ指の音が、まだ残っていたら止める（念のため）
+    // 同じ指が、まだどこかを押さえていることになっていたら、先に離したことにする（念のため）
     stopHold(pointerId);
 
-    // 同じ弦を、ほかの指で押さえていたら、その音を止めて置きかえる
-    // （本物のバイオリンと同じく、1本の弦では、1つの音しか鳴らせないため）
-    // その指が、あとで離れたときは、一覧にもう無いので、stopHold は何もしない
-    holds.forEach((hold, otherPointerId) => {
-      if (hold.marker.stringIndex === marker.stringIndex) {
-        stopVoice(hold.voice);
-        holds.delete(otherPointerId);
-      }
-    });
+    // どの指で、どの印を押さえたかを覚える
+    holds.set(pointerId, marker);
 
-    // 上限の長さで鳴らしはじめる（指が離れたら、stopHold で途中で止める）
-    const frequency = getMarkerFrequency(marker);
-    const voice = startVoice(frequency, HOLD_MAX_SECONDS);
-
-    // どの指で、どの印を押して、どの音を鳴らしているかを覚えておく
-    holds.set(pointerId, { marker: marker, voice: voice, frequency: frequency });
+    // その弦で鳴らす音を決め直す
+    updateString(marker.stringIndex, 0);
 
     // 画面の表示を作り直す
-    updateHeldNotes();
-
-    // どの印を押したかと、鳴らした周波数を覚えておく（図の印を目立たせて、下に周波数を表示する）
-    selectedMarker = marker;
-    playedFrequency = frequency;
+    updateDisplay();
   }
 
   /**
-   * 印を押していた指が離れたときに、その指の音を止める関数
-   * 鳴らしはじめてから 0.3秒たっていないときは、0.3秒まで鳴らしてから止める。
+   * 印を押さえていた指が離れたときに呼ばれる関数
+   * 指を忘れて、その弦で鳴らす音を決め直す。
+   * その弦を押さえている指がなくなったときは音を止めるが、鳴らしはじめてから 0.3秒たっていなければ、0.3秒まで鳴らす。
    * ページを開いて最初の操作で、押している間に音を出せなかったときも、指を離したここで 0.3秒鳴る
    * （指を離したときなら、ブラウザが音を出させてくれるため）。
    * @param {number} pointerId - 離れた指の番号
    */
   function stopHold(pointerId) {
-    // その指で鳴らしている音を探す。なければ、何もしない
-    const hold = holds.get(pointerId);
-    if (hold === undefined) {
+    // その指で押さえていた印を探す。なければ、何もしない
+    const marker = holds.get(pointerId);
+    if (marker === undefined) {
       return;
     }
 
-    // 一覧から外して、音を止める（最低の長さは鳴らす）
+    // 指を忘れて、その弦で鳴らす音を決め直す（音を止めるときは、最低の長さは鳴らす）
     holds.delete(pointerId);
-    stopVoice(hold.voice, HOLD_MIN_SECONDS);
-
-    // 押さえている音が1つだけ残ったときは、下の表示を、その音の詳しい表示にする
-    if (holds.size === 1) {
-      const remaining = [...holds.values()][0];
-      selectedMarker = remaining.marker;
-      playedFrequency = remaining.frequency;
-    }
+    updateString(marker.stringIndex, HOLD_MIN_SECONDS);
 
     // 画面の表示を作り直す
-    updateHeldNotes();
+    updateDisplay();
   }
 
   /**
-   * 指で押さえている音の一覧（画面に表示するためのもの）を、作り直す関数
-   * holds に入っている音を、周波数の低い順に並べる。
+   * 1本の弦で鳴らす音を決め直す関数
+   * 本物のバイオリンと同じく、その弦を押さえている指のうち、一番高い音（駒に近い指）だけを鳴らす。
+   * 例：ドとレを両方押さえていればレ。レの指を離せばドに戻る。
+   * @param {number} stringIndex - 弦の番号（0 が G線、3 が E線）
+   * @param {number} minSeconds - 押さえている指がなくなって音を止めるとき、最低でも鳴らす長さ（秒）
    */
-  function updateHeldNotes() {
-    // [...holds.values()] で、Map の値だけを取り出して、ふつうの配列にする
-    heldNotes = [...holds.values()].map((hold) => ({ marker: hold.marker, frequency: hold.frequency })).sort((a, b) => a.frequency - b.frequency);
+  function updateString(stringIndex, minSeconds) {
+    // その弦を押さえている印のうち、一番高い音（開放弦から半音いくつ分上か、が一番大きいもの）を探す
+    let top = null;
+    holds.forEach((marker) => {
+      if (marker.stringIndex === stringIndex && (top === null || marker.semitones > top.semitones)) {
+        top = marker;
+      }
+    });
+
+    // 今その弦で鳴らしている音
+    const current = voices.get(stringIndex);
+
+    // 鳴らす音が変わらないときは、何もしない
+    if (current !== undefined && top !== null && getMarkerId(current.marker) === getMarkerId(top)) {
+      return;
+    }
+
+    // 今鳴らしている音を止める
+    // 押さえている指がなくなったとき（top が null）は、最低の長さは鳴らす。別の音に変わるときは、すぐに止める
+    if (current !== undefined) {
+      stopVoice(current.voice, top === null ? minSeconds : 0);
+      voices.delete(stringIndex);
+    }
+
+    // 新しく鳴らす音があれば、上限の長さで鳴らしはじめる
+    if (top !== null) {
+      const frequency = getMarkerFrequency(top);
+      const voice = startVoice(frequency, HOLD_MAX_SECONDS);
+      voices.set(stringIndex, { marker: top, voice: voice, frequency: frequency });
+    }
+  }
+
+  /**
+   * 押さえている印と、鳴っている音の表示を、作り直す関数
+   * 鳴っている音が1つだけのときは、下の表示を、その音の詳しい表示にする。
+   */
+  function updateDisplay() {
+    // 押さえている印の id の一覧（[...holds.values()] で、Map の値だけを取り出して、ふつうの配列にする）
+    heldIds = [...holds.values()].map((marker) => getMarkerId(marker));
+
+    // 鳴っている音の一覧を、周波数の低い順に並べる
+    soundingNotes = [...voices.values()].map((sounding) => ({ marker: sounding.marker, frequency: sounding.frequency })).sort((a, b) => a.frequency - b.frequency);
+
+    // 鳴っている音が1つだけのときは、その音を「最後に押した音」として、詳しい表示にする
+    if (soundingNotes.length === 1) {
+      selectedMarker = soundingNotes[0].marker;
+      playedFrequency = soundingNotes[0].frequency;
+    }
   }
 </script>
 
@@ -333,8 +366,8 @@
   <!-- 押した音の表示：まだ押していないときは、押せることを案内する -->
   <!-- 2つ以上を押さえているとき（重音）は、音名と周波数だけを、低い順に1行で並べる -->
   <p class="played-info">
-    {#if heldNotes.length >= 2}
-      {heldNotes.map((held) => noteToText(held.marker.note) + "(" + held.frequency.toFixed(1) + ")").join(" ・ ")}
+    {#if soundingNotes.length >= 2}
+      {soundingNotes.map((held) => noteToText(held.marker.note) + "(" + held.frequency.toFixed(1) + ")").join(" ・ ")}
     {:else if selectedMarker === null}
       印や点を押すと、音が鳴ります
     {:else}
