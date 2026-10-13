@@ -24,9 +24,10 @@
   //   無視しないと、指を離したときに、もう一度音が鳴ってしまう）
   const IGNORE_CLICK_MILLISECONDS = 500;
 
-  // 今、印を押している指の番号（ブラウザが指1本ごとに付ける番号）。押していないときは null
-  // 2本目の指で別の印に触れたときに、1本目の指と区別するために覚えておく
-  let pressingPointerId = null;
+  // 今、印を押している指の番号の一覧（ブラウザが指1本ごとに付ける番号）
+  // 2本以上の指で同時に押すことがあるので、全部の指を覚えておく
+  // Set は、同じものを2回入れない「入れ物」。add で入れ、has で入っているか調べ、delete で取り出す
+  const pressingPointerIds = new Set();
 
   // 最後に指が離れた時刻（ミリ秒）。まだ一度も離れていないときは、とても昔の時刻にしておく
   let lastReleaseTime = -Infinity;
@@ -133,7 +134,7 @@
     }
 
     // どの指で押しているかを覚えて、押されたことを伝える
-    pressingPointerId = event.pointerId;
+    pressingPointerIds.add(event.pointerId);
     onpress(marker, event.pointerId);
   }
 
@@ -143,13 +144,13 @@
    * @param {PointerEvent} event - 離れたときの情報
    */
   function handlePointerEnd(event) {
-    // 印を押していた指とは別の指のときは、何もしない
-    if (event.pointerId !== pressingPointerId) {
+    // 印を押していた指でないときは、何もしない
+    if (!pressingPointerIds.has(event.pointerId)) {
       return;
     }
 
-    // 「押していない」状態に戻して、離れた時刻を覚えておく
-    pressingPointerId = null;
+    // その指を「押していない」状態に戻して、離れた時刻を覚えておく
+    pressingPointerIds.delete(event.pointerId);
     lastReleaseTime = performance.now();
 
     onrelease(event.pointerId);
