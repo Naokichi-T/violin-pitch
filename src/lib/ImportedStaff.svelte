@@ -3,6 +3,7 @@
   // 楽譜作成アプリ（string-score）からコピーした描画の関数（musicxml/render.js の renderScore）を使って、VexFlow で描く。
   // 枠の幅に合わせて改行し、幅が変わったら（スマホを縦向き⇔横向きにしたときなど）描き直す。
   // （ステップB：音符のタップ（onselect）、目標の音への自動スクロール（focus）、高さの決まった枠（maxHeight）を足した）
+  // （ステップB-2：音符の後ろに、うすい青の帯（bands）を敷けるようにした。目標の音を見つけやすくするため）
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // tick：画面の書き換えが終わるのを待つための仕組み（描いたあとにスクロールするときに使う）
@@ -20,7 +21,9 @@
   //             この音符の段が枠の外にあるときは、枠の中を自動でスクロールして見せる。省略したら何もしない
   // maxHeight ：枠の高さの上限（CSS の書き方。例："40vh"）（ステップB）
   //             これより高い楽譜は、枠の中でスクロールする。省略したら上限なし（楽譜の高さのまま）
-  let { score, noteColors = new Map(), onselect = null, focus = null, maxHeight = null } = $props();
+  // bands     ：後ろに帯を敷く音符の場所の配列 [{ measure, note }, ...]（ステップB-2）
+  //             手入力の楽譜の五線譜（Staff）の「選択中の青い帯」と同じ見せ方。省略したら帯は敷かない
+  let { score, noteColors = new Map(), onselect = null, focus = null, maxHeight = null, bands = [] } = $props();
 
   // ===== 描き方の設定値 =====
 
@@ -33,6 +36,15 @@
 
   // 自動スクロールで、段の上に残すすき間（ピクセル）（ステップB）
   const SCROLL_MARGIN = 8;
+
+  // 音符の後ろに敷く帯の見た目（ステップB-2。手入力の楽譜の五線譜の「選択中の帯」と同じ色と透け具合）
+  const BAND_COLOR = "#1976d2"; // 帯の色（青）
+  const BAND_OPACITY = 0.25; // 透け具合（0 は完全に透明、1 はまったく透けない。五線の線が隠れないように透かす）
+  const BAND_PADDING_X = 5; // 帯を、音符の左右にどれだけはみ出させるか（ピクセル）
+  const BAND_PADDING_Y = 6; // 帯を、五線・音符の上下にどれだけはみ出させるか（ピクセル）
+
+  // 五線の高さ（ピクセル）。VexFlow の五線は、線と線の間が 10 なので、5本の線で 40（ステップB-2）
+  const STAFF_HEIGHT = 40;
 
   // ===== 描くのに使う値 =====
 
@@ -69,12 +81,80 @@
     });
     hitBoxes = result.hitBoxes;
 
+    // 音符の後ろに帯を敷く（ステップB-2）
+    drawBands(bands);
+
     // 見せたい音符があれば、その段が見えるようにスクロールする（描き終わって、画面に出てから）
     const target = focus;
     if (target !== null) {
       tick().then(() => scrollToNote(target));
     }
   });
+
+  /**
+   * 音符の後ろに、うすい青の帯（縦長の四角）を敷く関数（ステップB-2）
+   * 帯は、五線の高さ全体と、その音符（五線の外に出た玉や符尾も）を囲む大きさにする。
+   * 描いた SVG のいちばん最初に入れるので、音符や五線より後ろ（下）に描かれる。
+   * @param {{measure: number, note: number}[]} positions - 帯を敷く音符の場所の配列
+   */
+  function drawBands(positions) {
+    const svg = container.querySelector("svg");
+    if (svg === null) {
+      return;
+    }
+
+    positions.forEach((position) => {
+      // その音符の当たり判定の四角を探す（パートはいつも 0）
+      const box = hitBoxes.find((item) => item.measure === position.measure && item.note === position.note);
+      if (box === undefined) {
+        return;
+      }
+
+      // 帯の上下：「音符を囲む四角」と「その段の五線」の両方を含む高さにする
+      // （音符が五線の中だけにあるときも、帯が五線の高さいっぱいになるように）
+      const staffTop = staffTopOf(box);
+      const top = Math.min(box.y, staffTop) - BAND_PADDING_Y;
+      const bottom = Math.max(box.y + box.h, staffTop + STAFF_HEIGHT) + BAND_PADDING_Y;
+
+      // SVG の四角を作る（createElementNS は、SVG の部品を作るときの決まった書き方）
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", String(box.x - BAND_PADDING_X));
+      rect.setAttribute("y", String(top));
+      rect.setAttribute("width", String(box.w + BAND_PADDING_X * 2));
+      rect.setAttribute("height", String(bottom - top));
+      rect.setAttribute("rx", "4"); // 角を少し丸くする
+      rect.setAttribute("fill", BAND_COLOR);
+      rect.setAttribute("fill-opacity", String(BAND_OPACITY));
+      rect.setAttribute("stroke", "none"); // 枠線は付けない（付けないと、VexFlow の SVG の決まりで黒い枠線が付いてしまう）
+
+      // いちばん最初に入れて、音符や五線より後ろに描かれるようにする
+      svg.insertBefore(rect, svg.firstChild);
+    });
+  }
+
+  /**
+   * 音符がある段の、五線のいちばん上の線の高さを求める関数（ステップB-2）
+   * 描いた SVG の中から、その音符と同じ段・同じ小節の五線を探して、その上端の高さを返す。
+   * @param {object} box - 音符の当たり判定の四角（renderScore が返したもの）
+   * @returns {number} 五線のいちばん上の線の高さ（見つからないときは、音符の四角の上端）
+   */
+  function staffTopOf(box) {
+    const svg = container.querySelector("svg");
+
+    // VexFlow は、五線を class="vf-stave" のまとまりで描く。その中の線の高さを調べて、
+    // この音符の横の位置にあり、段の上端〜下端の間にある五線を探す
+    const staves = svg.querySelectorAll(".vf-stave");
+    for (const stave of staves) {
+      const rect = stave.getBBox(); // 五線のまとまりを囲む四角（SVG の中の位置）
+      const centerX = box.x + box.w / 2;
+      const inX = centerX >= rect.x && centerX <= rect.x + rect.width;
+      const inLine = rect.y >= box.lineTop && rect.y + rect.height <= box.lineBottom;
+      if (inX && inLine) {
+        return rect.y;
+      }
+    }
+    return box.y;
+  }
 
   /**
    * 音符の段が枠の中に見えるように、枠の中をスクロールする関数（ステップB）

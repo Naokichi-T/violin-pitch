@@ -5,6 +5,7 @@
   // （ステップB：「じっくり」の練習を足した。手入力の楽譜の練習ページ（/practice）と同じ設定
   //   （区間・くり返す・モード・判定のレベル・開放弦）を並べ、レベル・開放弦は共通の設定として保存する。
   //   「通し」は、ステップCで足すまで押せないようにしておく）
+  // （ステップB-2：目標の音を見つけやすくするため、音符を明るい青にして、後ろにうすい青の帯を敷くようにした）
 
   // onMount：このページが画面に表示された直後に処理をするための仕組み
   import { onMount } from "svelte";
@@ -47,8 +48,9 @@
     { id: "run", name: "通し", description: "準備中", ready: false },
   ];
 
-  // ===== 五線譜の色（ステップB。手入力の楽譜の五線譜と同じ色） =====
-  const TARGET_COLOR = "#0d47a1"; // 今の目標の音・区間を選ぶときに1回目にタップした音（濃い青）
+  // ===== 五線譜の色（ステップB） =====
+  // （ステップB-2：濃い青 #0d47a1 は黒い音符と見分けにくかったので、明るい青にして、後ろに帯も敷くようにした）
+  const TARGET_COLOR = "#1976d2"; // 今の目標の音・区間を選ぶときに1回目にタップした音（明るい青）
   const PASSED_COLOR = "#2e7d32"; // 通過した音（緑）
 
   // 「じっくり」のときの、五線譜の枠の高さの上限
@@ -185,7 +187,7 @@
 
   /**
    * 「じっくり」のときの、五線譜の色の表を作る関数（ステップB）
-   * 灰色の音（判定から外す音）に、通過した音（緑）と、今の目標の音（濃い青）を重ねる。
+   * 灰色の音（判定から外す音）に、通過した音（緑）と、今の目標の音（青）を重ねる。
    * くり返しで同じ音符が2回出てくるときは、今の目標の音の色をいちばん優先する。
    * @param {number} targetIndex - 今の目標の音が、練習する音の並びの何番目か（0から）
    * @param {boolean[]} passed - 通過した音の位置に true が入った配列
@@ -201,7 +203,7 @@
       }
     });
 
-    // 今の目標の音を濃い青にする（いちばん最後に入れるので、緑より優先される）
+    // 今の目標の音を青にする（いちばん最後に入れるので、緑より優先される）
     const current = practiceTargets[targetIndex];
     if (current !== undefined) {
       current.positions.forEach((p) => colors.set("0-" + p.measure + "-" + p.note, TARGET_COLOR));
@@ -342,6 +344,7 @@
     score={renderScoreData}
     noteColors={practiceColors(targetIndex, passed)}
     focus={practiceTargets[targetIndex]?.positions[0] ?? null}
+    bands={practiceTargets[targetIndex]?.positions ?? []}
     maxHeight={STAFF_HEIGHT_PRACTICE}
     onselect={(position) => selectFromStaff(position, targetIndex, setTarget)}
   />
@@ -467,8 +470,8 @@
           <p class="range-message">{rangeMessage}</p>
         {/if}
 
-        <!-- 楽譜の全体。1回目にタップした音符は濃い青で表示する -->
-        <ImportedStaff score={renderScoreData} noteColors={rangeColors} maxHeight={STAFF_HEIGHT_RANGE} onselect={handleRangeTap} />
+        <!-- 楽譜の全体。1回目にタップした音符は、青くして後ろに帯を敷く（ステップB-2：帯を足した） -->
+        <ImportedStaff score={renderScoreData} noteColors={rangeColors} bands={pendingPosition !== null ? [pendingPosition] : []} maxHeight={STAFF_HEIGHT_RANGE} onselect={handleRangeTap} />
 
         <!-- 選ぶのをやめるボタン -->
         <button class="range-cancel-button" onclick={closeRangeSelector}>キャンセル</button>
