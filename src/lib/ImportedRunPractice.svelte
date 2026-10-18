@@ -45,7 +45,8 @@
   import { centsToPoints, getTotalScore, secondsToPoints, getRhythmTotalScore } from "#lib/scoring.js";
 
   // マイクの記録から、音の出だしの時刻を見つける関数を読み込む（ステップD）
-  import { findOnset } from "#lib/rhythm.js";
+  // （ステップD-2：拾った高さがメトロノームのクリックの音かを調べる関数も読み込む。音程の判定でクリックの音をよけるため）
+  import { findOnset, isClickNoise } from "#lib/rhythm.js";
 
   // マイクで音の高さを調べはじめる関数と、止める関数を読み込む
   import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
@@ -741,6 +742,14 @@
 
     // ここから下は音程の判定のため：音が出ていないときは何もしない
     if (frequency === null) {
+      return;
+    }
+
+    // メトロノームのクリックの音を拾ったときは、音程の判定に使わない（ステップD-2）
+    // （1拍目のクリックは高い音なので、弾いていないのに「高い」と出てしまうことがあったため）
+    // （なめらかにする前の高さか、なめらかにした高さのどちらかが、クリックの直後にクリックの高さなら、使わない）
+    const now = musicTime();
+    if (isClickNoise(now, rawFrequency, playedClickTimes) || isClickNoise(now, frequency, playedClickTimes)) {
       return;
     }
     const items = runTimeline.items;

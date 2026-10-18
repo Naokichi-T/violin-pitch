@@ -13,6 +13,9 @@
 //   （高さは、前の音と新しい音が混ざっている間は目標の高さにならず、音量よりおそく変わるため。弓を返したときなど）
 // ・前の音と同じ高さで、つながっているとき：「音量がいったん下がって、また上がった時刻」（弓を返して弾き直したところ）
 // どちらも、お手本の始まりの少し前から、音の長さの7割（0.35秒まで）の間で探す。見つからなければ null。
+// （ステップD-2：メトロノームのクリックの直後に、クリックの高さ（1000Hz・1500Hz）を拾った記録は、高さを「なし」として扱う。
+//   1拍目のクリックは高い音なので、高さで見つけるときにも、クリックの音を拾ってしまうことがあったため。
+//   クリックの直後でも、バイオリンの高さを拾えている記録は使う（拍の頭で弾き始めた出だしを見のがさないため））
 
 // ===== 見つけ方の設定値 =====
 
@@ -47,6 +50,17 @@ const RISE_RATIO = 0.5;
 // メトロノームのクリックの直後、音量の変化を数えない時間（秒）（クリックの音をマイクが拾うため）
 const CLICK_IGNORE = 0.05;
 
+// メトロノームのクリックの直後、クリックの高さを拾っていないか調べる時間（秒）（ステップD-2）
+// クリックは 0.05秒鳴り、高さは 0.085秒ぶんの波から調べるので、鳴り終わっても少しの間はクリックの高さが出る。
+// それに、スピーカーから音が出るまでの遅れを足して、長めにしてある
+const CLICK_PITCH_WINDOW = 0.2;
+
+// クリックの高さ（Hz）（audio.js の CLICK_FREQUENCY・ACCENT_CLICK_FREQUENCY と同じ値）（ステップD-2）
+const CLICK_FREQUENCIES = [1000, 1500];
+
+// クリックの高さとみなす範囲（セント）（ステップD-2）
+const CLICK_MATCH_CENTS = 50;
+
 /**
  * 2つの周波数が、何セント離れているかを返す関数（このファイルの中だけで使う）
  * @param {number} a - 周波数（Hz）
@@ -74,11 +88,14 @@ export function findOnset(frames, item, previous, targetFrequency, clickTimes) {
   const to = item.start + after;
 
   // 範囲の中の記録（遅れのぶんを差し引いた時刻で見る）
+  // （ステップD-2：クリックの高さを拾った記録は、高さを null（音なし）にしておく。
+  //   クリックの直後かどうかは、遅れを差し引く前の時刻（frame.time）とクリックの時刻をそのまま比べる）
   const inRange = [];
   frames.forEach((frame) => {
     const time = frame.time - ONSET_LATENCY;
     if (time >= from && time <= to) {
-      inRange.push({ time: time, frequency: frame.frequency, rms: frame.rms });
+      const frequency = isClickNoise(frame.time, frame.frequency, clickTimes) ? null : frame.frequency;
+      inRange.push({ time: time, frequency: frequency, rms: frame.rms });
     }
   });
   if (inRange.length < 3) {
@@ -89,6 +106,27 @@ export function findOnset(frames, item, previous, targetFrequency, clickTimes) {
     return findVolumeOnset(inRange, clickTimes);
   }
   return findPitchOnset(inRange, targetFrequency);
+}
+
+/**
+ * マイクで拾った高さが、メトロノームのクリックの音かどうかを調べる関数（ステップD-2）
+ * 「クリックを鳴らした直後（CLICK_PITCH_WINDOW 秒以内）」で、「高さがクリックの高さ（1000Hz・1500Hz）に近い」ときに true。
+ * クリックの直後でも、バイオリンの高さを拾えているときは false（使ってよい）。
+ * 音程の判定（ImportedRunPractice.svelte）でも使うので、ほかのファイルから使えるようにしてある（export）。
+ * @param {number} time - マイクの記録の時刻（秒。時刻表と同じ数え方。遅れを差し引く前）
+ * @param {number|null} frequency - 拾った高さ（Hz）。音が出ていないときは null
+ * @param {number[]} clickTimes - クリックを鳴らした時刻（秒）の並び
+ * @returns {boolean} クリックの音なら true
+ */
+export function isClickNoise(time, frequency, clickTimes) {
+  if (frequency === null) {
+    return false;
+  }
+  const afterClick = clickTimes.some((click) => time >= click && time < click + CLICK_PITCH_WINDOW);
+  if (!afterClick) {
+    return false;
+  }
+  return CLICK_FREQUENCIES.some((click) => centsBetween(frequency, click) <= CLICK_MATCH_CENTS);
 }
 
 /**
