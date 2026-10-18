@@ -165,6 +165,17 @@
     return measureName(renderScoreData, first.measure) + "〜" + measureName(renderScoreData, last.measure) + "（" + practiceTargets.length + "音）" + repeatNote;
   });
 
+  // 五線譜に描く小節の範囲 { from, to }（ステップD-3）
+  // 区間を決めているときは、区間の音がある小節のうち、いちばん前からいちばん後ろまで（くり返しで戻る区間でも、まとめて1つの範囲）。
+  // 楽譜の全体のときは null（全部の小節を描く）。区間を選ぶ画面では使わない（全体から選べるように）
+  let displayRange = $derived.by(() => {
+    if (rangeStart === null || practiceTargets.length === 0) {
+      return null;
+    }
+    const measures = practiceTargets.flatMap((target) => target.positions.map((p) => p.measure));
+    return { from: Math.min(...measures), to: Math.max(...measures) };
+  });
+
   // 区間が変わったことを見分けるための目印。これが変わると、練習の部品を作り直して、最初の音からやり直す
   let rangeKey = $derived(rangeStart + "-" + rangeEnd + "-" + rangeIncludesRepeats);
 
@@ -432,6 +443,7 @@
     focus={practiceTargets[targetIndex]?.positions[0] ?? null}
     bands={practiceTargets[targetIndex]?.positions ?? []}
     maxHeight={STAFF_HEIGHT_PRACTICE}
+    measureRange={displayRange}
     onselect={(position) => selectFromStaff(position, targetIndex, setTarget)}
   />
 {/snippet}
@@ -604,6 +616,7 @@
               {allowOpenString}
               {repeatEnabled}
               staffHeight={STAFF_HEIGHT_PRACTICE}
+              measureRange={displayRange}
               ontempochange={(value) => (runTempo = value)}
               onfinish={handleRunFinish}
             />

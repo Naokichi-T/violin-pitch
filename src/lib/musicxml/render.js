@@ -6,6 +6,8 @@
 //     ・minWidth   … 楽譜の最低限の幅（スマホの幅で改行させるため）
 //     ・hideNames  … パート名を描かず、その幅を詰める（1パートだけ表示するため）
 //     ・noteColors … 音符ごとの色（判定から外す音を灰色にするため。あとで判定の結果の色にも使う）
+//   （ステップD-3：もう1つ足した）
+//     ・measureRange … 描く小節の範囲（練習する区間の小節だけを描くため）
 // 楽譜データを VexFlow で五線譜に描くファイル
 // ここには「どの順番で何を描くか」という全体の流れだけを書く
 // 細かい処理は render フォルダの中のファイルに分けてある
@@ -78,7 +80,8 @@ const PLAYING_COLOR = "#16a34a";
 // 最後に測った「五線の上下のはみ出し」を覚えておく
 // 楽譜データと幅が前と同じなら測り直さない（選択の青や再生中の緑では、はみ出しは変わらないため）
 // （楽譜データは書き換えずに新しく作る決まりなので、「同じものか」は === で比べられる）
-let lastMeasured = { score: null, width: 0, extents: null };
+// （ステップD-3：描く小節の範囲（measureRange）も覚えておく。範囲が変わると、はみ出しも変わるため）
+let lastMeasured = { score: null, width: 0, rangeKey: "", extents: null };
 
 // ----------------------------------------------------------
 // 関数：renderScore
@@ -101,6 +104,11 @@ let lastMeasured = { score: null, width: 0, extents: null };
 //                 hideNames  … true なら、パート名を描かず、パート名を書く幅も取らない（省略したら false）
 //                 noteColors … 音符ごとの色の表（Map。キーは "パート-小節-番号"、値は色 "#9e9e9e" など）
 //                              鳴っている音・選択中の音・範囲選択の中の音のほうを優先する（省略したら色を付けない）
+//                 measureRange … 描く小節の範囲 { from, to }（0 から数えた小節の番号。to も描く）（ステップD-3）
+//                              省略したら全部の小節を描く。
+//                              範囲の最初の小節には、楽譜の最初の小節と同じように、音部記号・調号・拍子記号を描き、
+//                              いちばん上に、その小節でのテンポを描く。小節番号は、元の楽譜の番号のまま
+//                              （当たり判定の四角の measure も、元の楽譜の番号のまま）
 // 戻り値：{ hitBoxes, lineTops, lineBottoms, totalHeight }
 //   hitBoxes    … クリックの当たり判定に使う、音符ごとの四角の一覧
 //                 [{ part, measure, note, x, y, w, h, lineTop, lineBottom }, ...]
@@ -121,8 +129,24 @@ export function renderScore(VF, container, score, width, selection = null, range
   const partCount = score.parts.length; // パートの数
   const measureCount = score.measures.length; // 小節の数
 
+  // 【音程チェックアプリ（ステップD-3）】描く小節の範囲（省略したら全部）
+  // first … 描く最初の小節の番号、last … 描く最後の小節の番号（どちらも 0 から数える）
+  const first = options.measureRange ? Math.max(0, options.measureRange.from) : 0;
+  const last = options.measureRange ? Math.min(measureCount - 1, options.measureRange.to) : measureCount - 1;
+
   // ----- 1. 小節ごとの状態（拍子・調・音部記号と、その変化）を作る -----
   const states = buildStates(score);
+
+  // 【音程チェックアプリ（ステップD-3）】範囲の最初の小節は、楽譜の最初の小節と同じように、
+  // 拍子記号・調号・音部記号を「変わった」扱いにして、全部描く（元の状態は書き換えず、写しを作って入れ替える）
+  if (first > 0) {
+    states[first] = {
+      ...states[first],
+      timeChanged: true,
+      keyChanged: true,
+      clefChanged: states[first].clefChanged.map(() => true),
+    };
+  }
 
   // ----- 2. パートごと・小節ごとの臨時記号を決める -----
   // accidentalsList[p][i] = パート p の i 小節目の臨時記号の配列
@@ -156,8 +180,9 @@ export function renderScore(VF, container, score, width, selection = null, range
     noteWidths.push(maxNotes);
 
     // 記号の幅（段の頭のときと、途中のときの2通り）
-    startWidths.push(measureModifierWidth(VF, states[i], partCount, true, i === 0));
-    middleWidths.push(measureModifierWidth(VF, states[i], partCount, false, i === 0));
+    // 【音程チェックアプリ（ステップD-3）】範囲の最初の小節を、楽譜の最初の小節として扱う（i === 0 から i === first にした）
+    startWidths.push(measureModifierWidth(VF, states[i], partCount, true, i === first));
+    middleWidths.push(measureModifierWidth(VF, states[i], partCount, false, i === first));
   }
 
   // ----- 4. 改行の位置を決める -----
@@ -166,7 +191,19 @@ export function renderScore(VF, container, score, width, selection = null, range
   const otherLeft = LEFT + (options.hideNames ? 0 : NAME_WIDTH_OTHER); // 2段目以降の五線が始まる横の位置
   // （ステップ15-1：段を広げるときに使う、小節ごとの長さも渡す（アウフタクトの小節は短い長さ））
   const lengths = score.measures.map((_, i) => measureLength(score, i));
-  const lines = layoutLines(noteWidths, startWidths, middleWidths, totalWidth - firstLeft - LEFT, totalWidth - otherLeft - LEFT, lengths);
+  // 【音程チェックアプリ（ステップD-3）】描く範囲の小節だけで改行の位置を決める
+  // （layoutLines は、渡した並びの何番目かで小節の番号を返すので、あとで first を足して、元の楽譜の番号に戻す）
+  const lines = layoutLines(
+    noteWidths.slice(first, last + 1),
+    startWidths.slice(first, last + 1),
+    middleWidths.slice(first, last + 1),
+    totalWidth - firstLeft - LEFT,
+    totalWidth - otherLeft - LEFT,
+    lengths.slice(first, last + 1),
+  );
+  lines.forEach((line) => {
+    line.measures = line.measures.map((m) => m + first);
+  });
 
   // タイトルか作曲者があるときだけ、上に場所を空ける（テンポの場所はいつも空ける）
   // （keepHeader が true なら、空でも空ける：PDF の左上のパート名がテンポに重ならないように。後で直す候補の手直し）
@@ -187,19 +224,23 @@ export function renderScore(VF, container, score, width, selection = null, range
     beatLines: beatLines, // 拍の線を描くか（ステップ12-7）
     hideNames: !!options.hideNames, // 【音程チェックアプリ（ステップA-2）】パート名を描かないか
     noteColors: options.noteColors ?? null, // 【音程チェックアプリ（ステップA-2）】音符ごとの色の表（なければ null）
+    firstMeasure: first, // 【音程チェックアプリ（ステップD-3）】描く最初の小節の番号
+    initialEnding: endingBefore(score, first), // 【音程チェックアプリ（ステップD-3）】範囲の前から続いている1番・2番かっこの番号
   };
 
   // ----- 5. 下書きを描いて、段ごと・パートごとに、五線の上下にどれだけはみ出すかを測る -----
   // （下書きでは、パートの間をとても広くとるので、となりのパートとは重ならない）
   // 楽譜データと幅が前回と同じなら、前回測った結果をそのまま使う
   let extents;
-  if (lastMeasured.score === score && lastMeasured.width === totalWidth) {
+  // （【音程チェックアプリ（ステップD-3）】描く小節の範囲も同じときだけ）
+  const rangeKey = `${first}-${last}`;
+  if (lastMeasured.score === score && lastMeasured.width === totalWidth && lastMeasured.rangeKey === rangeKey) {
     extents = lastMeasured.extents;
   } else {
     extents = measureExtents(VF, lines.length, partCount, totalWidth, (draftContext, draftStaveYs) => {
       drawSystems(VF, draftContext, drawInfo, draftStaveYs, true);
     });
-    lastMeasured = { score: score, width: totalWidth, extents: extents };
+    lastMeasured = { score: score, width: totalWidth, rangeKey: rangeKey, extents: extents };
   }
 
   // ----- 6. 測った結果から、五線を置く高さと全体の高さを決める -----
@@ -231,7 +272,8 @@ export function renderScore(VF, container, score, width, selection = null, range
   context.restore();
 
   // ----- 8-2. テンポを描く（1段目の五線の左端の上） -----
-  drawTempo(context, score, firstLeft, headerHeight - 8);
+  // 【音程チェックアプリ（ステップD-3）】途中の小節から描くときは、その小節でのテンポ（tempoAt で調べたもの）を描く
+  drawTempo(context, first > 0 ? tempoAt(score, first) : score, firstLeft, headerHeight - 8);
 
   // ----- 9. 段・音符・タイ・スラー・松葉を、決めた高さで描く -----
   const allNotes = drawSystems(VF, context, drawInfo, positions.staveYs, false);
@@ -305,7 +347,8 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
 
   // 前の小節から続いている1番・2番かっこの番号（続いていなければ null）（ステップ11-7b）
   // 小節・段をまたいで続くので、段ごとの処理の外に置く
-  let endingOpen = null;
+  // 【音程チェックアプリ（ステップD-3）】途中の小節から描くときは、範囲の前から続いているかっこの番号から始める
+  let endingOpen = info.initialEnding ?? null;
 
   // 段ごとの左右の端の位置（段をまたぐスラー・松葉を描くのに使う）
   // lineBounds[l] = { startX: 音符が始まる位置, endX: 段の右端 }
@@ -330,14 +373,15 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
     // 2段目からは、段の頭の小節番号を書く（ステップ13-2）
     // 下書きでも描く（下書きで測ったはみ出しに入るので、上の段と重ならないように間があく）
     // （ステップ15-1：アウフタクトがあるときは、アウフタクトを数えない番号（measureNumber）にする）
-    if (l > 0) {
+    // 【音程チェックアプリ（ステップD-3）】途中の小節から描くときは、1段目にも小節番号を書く（元の楽譜の番号）
+    if (l > 0 || info.firstMeasure > 0) {
       const topY = staveYs[l][0]; // いちばん上のパートの五線を置く高さ
-      drawMeasureNumber(VF, context, measureNumber(score, line.measures[0]), otherLeft, topY);
+      drawMeasureNumber(VF, context, measureNumber(score, line.measures[0]), isFirstLine ? firstLeft : otherLeft, topY);
     }
 
     line.measures.forEach((i, m) => {
       const state = states[i];
-      const isFirst = i === 0; // 楽譜の最初の小節か
+      const isFirst = i === info.firstMeasure; // 楽譜の最初の小節か（【音程チェックアプリ（ステップD-3）】描く範囲の最初の小節か）
       const isLast = i === measureCount - 1; // 楽譜の最後の小節か
       const isLineStart = m === 0; // 段の最初の小節か
       const measureWidth = line.widths[m];
@@ -551,7 +595,7 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
     // （かっこの小節では、テンポの指示をかっこの横線より上に書く）
     const endingYs = drawEndings(context, lineEndings);
     tempoQueue.forEach((item) => {
-      gradualLine = drawTempoMarks(context, item.stave, item.tickables, score, item.i, l, gradualLine, endingYs.get(item.i) ?? null);
+      gradualLine = drawTempoMarks(context, item.stave, item.tickables, score, item.i, l, gradualLine, endingYs.get(item.i) ?? null, info.firstMeasure);
     });
 
     // --- この段の左端の線・括弧・パート名を描く（下書きでは描かない） ---
@@ -767,11 +811,15 @@ function drawEndings(context, lineEndings) {
 //   l           … 何段目か
 //   gradualLine … 前の小節から続いている点線（なければ null）
 //   endingY     … この小節が1番・2番かっこの中なら、かっこの横線の高さ（中でなければ null）（ステップ11-7b）
+//   firstMeasure … 【音程チェックアプリ（ステップD-3）】描く最初の小節の番号（省略したら 0）
+//                  この小節のテンポ変更は、楽譜のいちばん上に描くので、ここでは描かない
 // 戻り値：次の小節へ続く点線（続かなければ null）
 // ----------------------------------------------------------
-function drawTempoMarks(context, stave, tickables, score, i, l, gradualLine, endingY = null) {
+function drawTempoMarks(context, stave, tickables, score, i, l, gradualLine, endingY = null, firstMeasure = 0) {
   const info = score.measures[i];
-  const hasTempo = i > 0 && info.tempo !== undefined; // 途中のテンポ変更（1小節目は楽譜のいちばん上に描くので除く）
+  // 途中のテンポ変更（1小節目は楽譜のいちばん上に描くので除く）
+  // 【音程チェックアプリ（ステップD-3）】途中の小節から描くときは、描く最初の小節（firstMeasure）を除く
+  const hasTempo = i > firstMeasure && info.tempo !== undefined;
   const resets = hasTempo || !!info.aTempo; // テンポ変更・a tempo のあとは、rit.・accel. の点線を続けない
   if (resets) gradualLine = null;
   const hasJumpMarks = jumpMarksWidth(info) > 0; // 𝄋・𝄌・To Coda・Fine・D.C.・D.S.・練習番号があるか（ステップ11-7c・11-7d）
@@ -968,6 +1016,25 @@ function drawTempoWords(context, text, x, y) {
   const width = context.measureText(text).width;
   context.restore();
   return x + width;
+}
+
+// ----------------------------------------------------------
+// 関数：endingBefore
+// 【音程チェックアプリ（ステップD-3）】i 小節目の前から続いている1番・2番かっこの番号を調べる
+// 途中の小節から描くとき、かっこの途中から始まっても、かっこを描けるようにするために使う
+//   score … 楽譜データ
+//   i     … 描く最初の小節の番号（0 から数える）
+// 戻り値：続いているかっこの番号（続いていなければ null）
+// ----------------------------------------------------------
+function endingBefore(score, i) {
+  let open = null;
+  for (let k = 0; k < i; k++) {
+    const info = score.measures[k];
+    // collectEndingPart と同じ決まりで進める：かっこの始まりで番号が入り、かっこの終わりで切れる
+    const number = info.ending ?? open;
+    open = number && !info.endingEnd ? number : null;
+  }
+  return open;
 }
 
 // ----------------------------------------------------------

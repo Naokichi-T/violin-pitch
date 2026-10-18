@@ -9,6 +9,8 @@
   //   そのため、描き直し・自動スクロール・重ねる層を、それぞれ別の $effect に分けた）
   // （ステップC-2：流れる縦線（cursorKeys・cursorTime）を足した。縦線は、もう1枚の重ねる層に描き、時刻が変わるたびに位置だけを動かす）
   // （ステップD：印を、音符の上にも出せるようにした（overlayMarks の placement: "above"）。リズムの結果に使う）
+  // （ステップD-3：描く小節の範囲（measureRange）を足した。練習する区間の小節だけを描くため。
+  //   小節の番号は、範囲を決めても元の楽譜の番号のままなので、色・帯・印・タップの場所は、今までと同じ番号で使える）
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // tick：画面の書き換えが終わるのを待つための仕組み（描いたあとにスクロールするときに使う）
@@ -39,7 +41,21 @@
   // cursorKeys  ：流れる縦線の目じるしの並び（importedTimeline.js の cursorKeys）（ステップC-2）
   // cursorTime  ：流れる縦線を出す時刻（秒。時刻表と同じ数え方）。null のときは縦線を出さない（ステップC-2）
   //               1秒に何十回も変わるが、五線譜も重ねる層も描き直さず、縦線の位置だけを動かす
-  let { score, noteColors = new Map(), onselect = null, focus = null, maxHeight = null, bands = [], overlayBands = [], overlayMarks = [], cursorKeys = [], cursorTime = null } = $props();
+  // measureRange：描く小節の範囲 { from, to }（0 から数えた小節の番号。to も描く）（ステップD-3）
+  //               省略したら（null）、全部の小節を描く
+  let {
+    score,
+    noteColors = new Map(),
+    onselect = null,
+    focus = null,
+    maxHeight = null,
+    bands = [],
+    overlayBands = [],
+    overlayMarks = [],
+    cursorKeys = [],
+    cursorTime = null,
+    measureRange = null,
+  } = $props();
 
   // ===== 描き方の設定値 =====
 
@@ -127,6 +143,7 @@
       minWidth: MIN_WIDTH, // スマホの幅で改行する
       hideNames: true, // パート名は描かない（ページの上に出しているので）
       noteColors: noteColors, // 判定から外す音の灰色・目標の音・通過した音・判定の結果などの色
+      measureRange: measureRange, // 描く小節の範囲（null なら全部）（ステップD-3）
     });
     hitBoxes = result.hitBoxes;
 
@@ -189,9 +206,14 @@
     // 小節ごとの五線（VexFlow は、1つのパートの五線を、小節の順に描いている）
     const staves = [...svg.querySelectorAll(".vf-stave")].map((stave) => stave.getBBox());
 
+    // 描いた最初の小節の番号（範囲を決めていないときは 0）（ステップD-3）
+    // 五線は描いた小節の分しかないので、「何番目の五線か」は、小節の番号からこれを引いて求める
+    // （範囲の外の小節の目じるしは、五線が見つからないので入れない）
+    const firstMeasure = measureRange !== null ? measureRange.from : 0;
+
     const points = [];
     keys.forEach((key) => {
-      const stave = staves[key.measure];
+      const stave = staves[key.measure - firstMeasure];
       if (stave === undefined) {
         return;
       }
