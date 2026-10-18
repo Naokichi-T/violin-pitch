@@ -1,5 +1,6 @@
 // 読み込んだ楽譜の「お手本の時刻表」を作るファイル（ステップC-1）
 // （ステップC-2：流れる縦線の目じるし cursorKeys を足した）
+// （ステップC-3：お手本を鳴らすための、鳴らす音の並び sounds を足した）
 // 「通し」で、判定する音ごとに「何秒から何秒まで鳴るか」を決める。
 // 時刻の計算は、楽譜作成アプリ（string-score）の再生の計算（playback.js の buildEvents）をそのまま使うので、
 // テンポの変化・rit.・accel.・a tempo・フェルマータ・カエスーラ・くり返し・アウフタクトが、再生とぴったり同じになる。
@@ -19,6 +20,9 @@
 //   cursorKeys: [{ time, measure, note }, ...] … 流れる縦線の「目じるし」（ステップC-2）
 //               この時刻に、縦線がこの場所にある、という点を時刻の順に並べたもの。点と点の間は、なめらかに動かす
 //               note が数字なら、その音符の位置。note が "start" なら小節の音符の始まり、"end" なら小節の右端
+//   sounds: [{ pitches, start, end }, ...] … お手本で鳴らす音の並び（ステップC-3）
+//               灰色の音（判定しない音）も入れる。重音は全部の高さ（pitches）を鳴らす。
+//               タイでつながった音符は1つの長い音にまとめる。トリルなどの装飾・前打音は付けず、書いてある音だけ
 //   beatSeconds: 0.75                … 最初の音のあたりの、1拍の長さ（秒）（カウントの間に使う）
 // }
 
@@ -29,7 +33,11 @@ import { buildEvents, secondsPerTick, beatTicks } from "#lib/musicxml/playback.j
 import { timeAt, tempoAt } from "#lib/musicxml/model.js";
 
 // 読み込んだ楽譜を五線譜（楽譜作成アプリの形）に直す関数と、判定する音の並びを作る関数を読み込む
-import { toRenderScore, buildTargets } from "#lib/imported.js";
+// （ステップC-3：楽譜作成アプリの音の高さを、音程チェックアプリの音の形にする関数も読み込む）
+import { toRenderScore, buildTargets, toPitchNote } from "#lib/imported.js";
+
+// 音符の高さを、低い順の配列にする関数を読み込む（重音なら全部）（ステップC-3）
+import { notePitches } from "#lib/musicxml/model.js";
 
 // ===== 判定に関する設定値 =====
 
@@ -130,7 +138,47 @@ export function buildTimeline(record, tempo, expandRepeats) {
   // 流れる縦線の目じるし（ステップC-2）
   const cursorKeys = buildCursorKeys(result, tickSeconds);
 
-  return { items: items, clicks: clicks, beatSeconds: beatSecondsAt(score, items, tickSeconds), cursorKeys: cursorKeys };
+  // お手本で鳴らす音の並び（ステップC-3）
+  const sounds = buildSounds(record, result, tickSeconds);
+
+  return { items: items, clicks: clicks, beatSeconds: beatSecondsAt(score, items, tickSeconds), cursorKeys: cursorKeys, sounds: sounds };
+}
+
+/**
+ * お手本で鳴らす音の並びを作る関数（このファイルの中だけで使う）（ステップC-3）
+ * 音符ごとの鳴る時間（highlights）を前から順に見て、音符の高さを付ける。
+ * タイの付いた音符のすぐ後ろ（時刻がつながっている）の音符は、前の音にまとめて長くする。
+ * @param {object} record - 読み込んだ楽譜
+ * @param {object} result - 鳴らす音の一覧（buildEvents の結果）
+ * @param {number} tickSeconds - 1ティックが何秒か
+ * @returns {{pitches: object[], start: number, end: number}[]} 鳴らす音の並び（時刻は秒）
+ */
+function buildSounds(record, result, tickSeconds) {
+  const sounds = [];
+  let previous = null; // 1つ前に入れた音 { sound, tie, endTick }
+
+  result.highlights.forEach((h) => {
+    const note = record.partMeasures[h.measure].notes[h.note];
+
+    // 前の音符にタイが付いていて、時刻がつながっているとき：前の音を長くするだけ
+    if (previous !== null && previous.tie && Math.abs(previous.endTick - h.startTick) < 1) {
+      previous.sound.end = h.endTick * tickSeconds;
+      previous.tie = !!note.tie;
+      previous.endTick = h.endTick;
+      return;
+    }
+
+    // 新しい音：重音なら全部の高さ
+    const sound = {
+      pitches: notePitches(note).map((pitch) => toPitchNote(pitch)),
+      start: h.startTick * tickSeconds,
+      end: h.endTick * tickSeconds,
+    };
+    sounds.push(sound);
+    previous = { sound: sound, tie: !!note.tie, endTick: h.endTick };
+  });
+
+  return sounds;
 }
 
 /**
@@ -217,5 +265,7 @@ export function sliceTimeline(timeline, startIndex, endIndex) {
     beatSeconds: beatSeconds,
     // 流れる縦線の目じるしも、区間の中だけを残して、同じようにずらす（ステップC-2）
     cursorKeys: timeline.cursorKeys.filter((key) => key.time >= anchor - 1e-6 && key.time <= lastEnd + 1e-6).map((key) => ({ ...key, time: key.time - anchor })),
+    // お手本で鳴らす音も、区間の中で鳴り始める音だけを残して、同じようにずらす（ステップC-3）
+    sounds: timeline.sounds.filter((sound) => sound.start >= anchor - 1e-6 && sound.start < lastEnd - 1e-6).map((sound) => ({ ...sound, start: sound.start - anchor, end: sound.end - anchor })),
   };
 }

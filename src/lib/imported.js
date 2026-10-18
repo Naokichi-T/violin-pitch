@@ -3,6 +3,7 @@
 // （ステップA-2：id で1つ探す・五線譜に描く形にする・灰色にする音符の表を作る関数を足した）
 // （ステップB：判定する音の並びを作る・区間を決める・くり返しがあるかを調べる関数を足した）
 // （ステップC-1：「通し」の音程の最高点 bestPitchScore を記録する関数を足した。最高点は音程とリズムで別々に持つ）
+// （ステップC-3：toPitchNote を、ほかのファイルからも使えるようにした）
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -506,11 +507,12 @@ export function getExcludedNoteColors(partMeasures) {
 const STEP_INDEX = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
 
 /**
- * 楽譜作成アプリの音の高さを、音程チェックアプリの音の形にする関数（このファイルの中だけで使う）（ステップB）
+ * 楽譜作成アプリの音の高さを、音程チェックアプリの音の形にする関数（ステップB）
+ * （ステップC-3：お手本を鳴らすときにも使うので、ほかのファイルから使えるようにした（export））
  * @param {{step: string, alter: number, octave: number}} pitch - 楽譜作成アプリの音の高さ（例：{ step: 'F', alter: 1, octave: 5 }）
  * @returns {{step: number, accidental: number, octave: number}} 音程チェックアプリの音の形（例：{ step: 3, accidental: 1, octave: 5 }）
  */
-function toPitchNote(pitch) {
+export function toPitchNote(pitch) {
   return { step: STEP_INDEX[pitch.step], accidental: pitch.alter ?? 0, octave: pitch.octave };
 }
 

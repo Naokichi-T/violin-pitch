@@ -14,6 +14,11 @@
   // ・流れる縦線：五線譜の上を、お手本の時刻表どおりに、なめらかに流れる（最初は入）
   // ・メトロノーム：演奏中、拍の頭でクリックを鳴らす（1拍目は高い音。最初は切）
   // 入・切は、ブラウザに覚えておく
+  //
+  // 【お手本を聴く】（ステップC-3）
+  // ［♪ お手本を聴く］を押すと、マイクを使わずに、時刻表どおりにお手本を電子音で鳴らす（判定はしない）。
+  // 短いカウントのあと、オレンジの帯・流れる縦線・メトロノームも、本番と同じように動く。
+  // 高さは、選んでいる音律の高さ。灰色の音も鳴らし、重音は全部の音を鳴らす（装飾は付けず、書いてある音だけ）。
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -37,7 +42,8 @@
 
   // メトロノームの音を鳴らす関数と、合図の音を鳴らす関数を読み込む
   // （ステップC-2：演奏中のメトロノームのために、時刻を決めてクリックを鳴らす関数と、音の時計の今の時刻を返す関数も読み込む）
-  import { playClick, playChime, scheduleClick, getAudioTime } from "#lib/audio.js";
+  // （ステップC-3：お手本を鳴らすために、いくつも同時に鳴らせる音を鳴らす関数・止める関数も読み込む）
+  import { playClick, playChime, scheduleClick, getAudioTime, startVoice, stopVoice } from "#lib/audio.js";
 
   // カウントの拍の数を、ブラウザに保存する関数と読み込む関数を読み込む（今の「通し」と共通の設定）
   // （ステップC-2：流れる縦線・メトロノームの入・切を、読み込む関数と保存する関数も読み込む）
@@ -125,6 +131,13 @@
   // 最後まで弾けたときに鳴らす、終わりの合図の音（今の「通し」と同じ）
   const FINISH_CHIME_FREQUENCIES = [1768, 2652];
 
+  // お手本を聴くときの、カウントの拍の数（ステップC-3。弓を構えなくてよいので、くり返しの2回目と同じ短いカウントにする）
+  const PREVIEW_COUNT_IN_BEATS = 4;
+
+  // お手本の音を鳴らす長さの割合（ステップC-3）
+  // 楽譜の長さいっぱいに鳴らすと、同じ高さの音が続くときに切れ目が分からないので、少しだけ短くする
+  const PREVIEW_GATE = 0.92;
+
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
   // テンポ（♩＝○○）。最初は、楽譜のテンポ（練習ページで覚えているテンポ）
@@ -164,6 +177,9 @@
   // 流れる縦線を出す時刻（秒。時刻表と同じ数え方）。出さないときは null（ステップC-2）
   let cursorTime = $state(null);
 
+  // お手本を聴いている最中かどうか（true：お手本を聴いている。カウント・演奏の進み方は本番と同じ）（ステップC-3）
+  let isPreview = $state(false);
+
   // 練習する範囲のお手本の時刻表（テンポが変わるたびに作り直す）
   // $derived を付けると、tempo が変わるたびに自動で計算し直される
   let timeline = $derived(getTimeline(tempo));
@@ -200,6 +216,10 @@
 
   // メトロノームで、次に鳴らす拍の頭の番号（時刻表の clicks の何番目か）（ステップC-2）
   let nextClickIndex = 0;
+
+  // お手本で、次に鳴らす音の番号（時刻表の sounds の何番目か）と、鳴らしている音の一覧（止めるときに使う）（ステップC-3）
+  let nextSoundIndex = 0;
+  let previewVoices = [];
 
   // ===== 計算で決まる値 =====
 
@@ -416,6 +436,29 @@
   }
 
   /**
+   * お手本を聴きはじめる関数（「お手本を聴く」ボタン）（ステップC-3）
+   * マイクは使わない。短いカウントのあと、時刻表どおりにお手本の音を鳴らす（判定はしない）。
+   * 前の「通し」の結果は消す（お手本の帯や縦線と混ざって見づらくなるため）。
+   */
+  function startPreview() {
+    errorMessage = "";
+    results = [];
+    roundScores = [];
+    selectedIndex = null;
+    isPreview = true;
+    runTimeline = timeline;
+    startRound(PREVIEW_COUNT_IN_BEATS);
+  }
+
+  /**
+   * 鳴らしているお手本の音を、全部止める関数（ステップC-3）
+   */
+  function stopPreviewVoices() {
+    previewVoices.forEach((voice) => stopVoice(voice));
+    previewVoices = [];
+  }
+
+  /**
    * 1回分（くり返しのときは、その回）を始める関数
    * @param {number} beats - この回のカウントの拍の数
    */
@@ -429,6 +472,7 @@
     samples = runTimeline.items.map(() => []);
     roundStarted = false;
     nextClickIndex = 0; // ステップC-2
+    nextSoundIndex = 0; // ステップC-3
     currentIndex = null;
     startTime = performance.now();
     phase = "countIn";
@@ -475,10 +519,22 @@
         phase = "playing";
       }
 
-      // 終わった音を、順に判定する（マイクの高さの遅れのぶん、音が終わってから少し待つ）
-      while (nextJudgeIndex < items.length && t >= items[nextJudgeIndex].end + DETECTION_DELAY) {
-        judgeNote(nextJudgeIndex);
-        nextJudgeIndex += 1;
+      if (isPreview) {
+        // お手本を聴いているとき（ステップC-3）：判定はしないで、時刻が来た音を鳴らす
+        while (nextSoundIndex < runTimeline.sounds.length && runTimeline.sounds[nextSoundIndex].start <= t) {
+          playSound(runTimeline.sounds[nextSoundIndex]);
+          nextSoundIndex += 1;
+        }
+        // 終わった音の番号だけ進めておく（休符の間に、次の音の段を見せる自動スクロールのため）
+        while (nextJudgeIndex < items.length && t >= items[nextJudgeIndex].end) {
+          nextJudgeIndex += 1;
+        }
+      } else {
+        // 終わった音を、順に判定する（マイクの高さの遅れのぶん、音が終わってから少し待つ）
+        while (nextJudgeIndex < items.length && t >= items[nextJudgeIndex].end + DETECTION_DELAY) {
+          judgeNote(nextJudgeIndex);
+          nextJudgeIndex += 1;
+        }
       }
       nextJudgeIndexState = nextJudgeIndex;
 
@@ -504,8 +560,14 @@
         nextClickIndex += 1;
       }
 
-      // 最後の音が終わった
-      if (nextJudgeIndex >= items.length) {
+      // お手本の最後の音が鳴り終わった（ステップC-3）
+      if (isPreview && nextJudgeIndex >= items.length && nextSoundIndex >= runTimeline.sounds.length && t >= lastSoundEnd()) {
+        finishPreview();
+        return;
+      }
+
+      // 最後の音が終わった（本番）
+      if (!isPreview && nextJudgeIndex >= items.length) {
         finishRound();
         return;
       }
@@ -513,6 +575,45 @@
 
     // 次の画面の書き換えで、もう一度調べる
     frameId = requestAnimationFrame(update);
+  }
+
+  /**
+   * お手本の音を1つ鳴らす関数（ステップC-3）
+   * 選んでいる音律の高さで、重音なら全部の高さを、楽譜の長さの少し手前まで鳴らす。
+   * @param {{pitches: object[], start: number, end: number}} sound - 鳴らす音（時刻表の sounds の1つ）
+   */
+  function playSound(sound) {
+    const seconds = Math.max(0.05, (sound.end - sound.start) * PREVIEW_GATE);
+    sound.pitches.forEach((pitch) => {
+      const frequency = getFrequency(pitch, currentKey, temperamentId);
+      previewVoices.push(startVoice(frequency, seconds));
+    });
+    // 鳴らし終わった音は、一覧から外していく（一覧が長くなりすぎないように。止めても害はないが、数を減らす）
+    if (previewVoices.length > 64) {
+      previewVoices = previewVoices.slice(-32);
+    }
+  }
+
+  /**
+   * お手本の音がすべて鳴り終わる時刻（秒）を返す関数（ステップC-3）
+   * @returns {number} 秒
+   */
+  function lastSoundEnd() {
+    const sounds = runTimeline.sounds;
+    return sounds.length > 0 ? Math.max(...sounds.map((sound) => sound.end)) : 0;
+  }
+
+  /**
+   * お手本を最後まで鳴らしたときの処理をする関数（ステップC-3）
+   * 「くり返す」に入っていても、お手本は1回で終わる。
+   */
+  function finishPreview() {
+    stopPreviewVoices();
+    frameId = null;
+    isPreview = false;
+    currentIndex = null;
+    cursorTime = null;
+    phase = "idle";
   }
 
   /**
@@ -641,6 +742,8 @@
       frameId = null;
     }
     stopMicrophone();
+    stopPreviewVoices(); // お手本の音も止める（ステップC-3）
+    isPreview = false;
     phase = "idle";
     currentIndex = null;
     cursorTime = null; // 流れる縦線を消す（ステップC-2）
@@ -678,8 +781,12 @@
       {:else}
         休み
       {/if}
-      {#if repeatEnabled}
+      {#if repeatEnabled && !isPreview}
         ・くり返し {roundScores.length + 1}回目
+      {/if}
+      <!-- お手本を聴いているときは、そのことが分かるようにする（ステップC-3） -->
+      {#if isPreview}
+        ・お手本
       {/if}
     </p>
     <!-- 休符の間は「−」を出す -->
@@ -747,6 +854,9 @@
     </button>
   {/if}
 </div>
+
+<!-- お手本を聴くボタン（ステップC-3）。動いている最中は押せない -->
+<button class="preview-button" disabled={isRunning} onclick={startPreview}>♪ お手本を聴く</button>
 
 <!-- 設定：ふだんは閉じておき、「設定」を押すと開く -->
 <details class="settings">
@@ -920,6 +1030,16 @@
   }
   button.main-button.stop {
     background-color: #c62828;
+  }
+
+  /* 「お手本を聴く」ボタン：横幅いっぱいの緑のボタン（「じっくり」の［目標の音を聴く］と同じ色）（ステップC-3） */
+  button.preview-button {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    color: white;
+    background-color: #2e7d32;
+    border: none;
   }
 
   /* 設定のエリア */
