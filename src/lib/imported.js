@@ -2,6 +2,7 @@
 // （ステップA-1b：同じ名前を探す・名前に (2) を付ける・上書き・削除の関数を足した）
 // （ステップA-2：id で1つ探す・五線譜に描く形にする・灰色にする音符の表を作る関数を足した）
 // （ステップB：判定する音の並びを作る・区間を決める・くり返しがあるかを調べる関数を足した）
+// （ステップC-1：「通し」の音程の最高点 bestPitchScore を記録する関数を足した。最高点は音程とリズムで別々に持つ）
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -20,7 +21,8 @@
 //   measures:      楽譜全体の小節の情報（拍子・調・途中のテンポ・rit.・くり返しなど。楽譜作成アプリと同じ形）
 //   partMeasures:  選んだパートの小節（音符の並び。楽譜作成アプリと同じ形）
 //   importedAt:    読み込んだ日時（ミリ秒の数字）
-//   bestScore:     「通し」の最高点（あとのステップで記録する。まだ無いときは、項目そのものが無い）
+//   bestPitchScore：「通し」の音程の最高点（ステップC-1。まだ無いときは、項目そのものが無い）
+//                   （リズムの最高点は、ステップDで bestRhythmScore として別に持つ予定）
 // }
 
 // 楽譜作成アプリの計算の関数を読み込む（調・高さを数にする・重音の高さの並び・ハーモニクスのひし形）
@@ -224,9 +226,9 @@ export function replaceImportedScore(id, record) {
   // 新しい楽譜を作る（id は前のまま、読み込んだ日時は今）
   const score = { ...record, id: old.id, importedAt: Date.now() };
 
-  // 楽譜の中身が同じで、前に最高点があれば、最高点を引き継ぐ
-  if (toComparableText(old) === toComparableText(record) && typeof old.bestScore === "number") {
-    score.bestScore = old.bestScore;
+  // 楽譜の中身が同じで、前に音程の最高点があれば、最高点を引き継ぐ（ステップC-1：bestPitchScore にした）
+  if (toComparableText(old) === toComparableText(record) && typeof old.bestPitchScore === "number") {
+    score.bestPitchScore = old.bestPitchScore;
   }
 
   // 一覧の同じ場所に入れ替えて、書き込む
@@ -627,4 +629,38 @@ export function findRange(targets, first, second) {
   const end = Math.max(firstIndexes[firstIndexes.length - 1], secondIndexes[secondIndexes.length - 1]);
 
   return { start: start, end: end };
+}
+
+/**
+ * 「通し」の音程の点数を、その楽譜の最高点と比べて、上回っていたら記録する関数（ステップC-1）
+ * 最高点は、読み込んだ楽譜の中に bestPitchScore という名前で入れておく（まだ無いときは、項目そのものが無い）。
+ * （手入力の楽譜の library.js の recordBestScore と同じ考え方）
+ * @param {string} id - 楽譜の id
+ * @param {number} points - 今回の点数（0〜100）
+ * @returns {{bestScore: number, isNewRecord: boolean}|null}
+ *   bestScore：記録した後の最高点、isNewRecord：今回の点数で最高点を更新したかどうか。
+ *   その id の楽譜がないときや、書き込めなかったときは null
+ */
+export function recordBestPitchScore(id, points) {
+  // 今の一覧を読み込んで、楽譜を探す
+  const scores = loadImportedScores();
+  const score = scores.find((item) => item.id === id);
+  if (score === undefined) {
+    return null;
+  }
+
+  // これまでの最高点（まだ無いときは null）
+  const previousBest = typeof score.bestPitchScore === "number" ? score.bestPitchScore : null;
+
+  // 最高点がまだ無いとき、または、今回の点数のほうが高いときは、更新する
+  if (previousBest === null || points > previousBest) {
+    score.bestPitchScore = points;
+    if (!writeImportedScores(scores)) {
+      return null;
+    }
+    return { bestScore: points, isNewRecord: true };
+  }
+
+  // 更新しなかったとき：これまでの最高点をそのまま返す
+  return { bestScore: previousBest, isNewRecord: false };
 }

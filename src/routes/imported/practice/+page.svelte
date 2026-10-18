@@ -6,6 +6,8 @@
   //   （区間・くり返す・モード・判定のレベル・開放弦）を並べ、レベル・開放弦は共通の設定として保存する。
   //   「通し」は、ステップCで足すまで押せないようにしておく）
   // （ステップB-2：目標の音を見つけやすくするため、音符を明るい青にして、後ろにうすい青の帯を敷くようにした）
+  // （ステップC-1：「通し」を足した。お手本の時刻表どおりに進んで、音程を判定する。音程の最高点を記録する。
+  //   選んだモードは、手入力の楽譜の練習ページと共通の設定として保存する）
 
   // onMount：このページが画面に表示された直後に処理をするための仕組み
   import { onMount } from "svelte";
@@ -25,7 +27,8 @@
 
   // 判定のレベル・開放弦の設定を、ブラウザから読み込む関数と、ブラウザに保存する関数を読み込む
   // （手入力の楽譜の練習ページと同じ保存場所なので、どちらで変えても同じ設定になる）
-  import { loadLevelId, saveLevelId, loadOpenStringEnabled, saveOpenStringEnabled } from "#lib/settings.js";
+  // （ステップC-1：練習のモードも、共通の設定として読み込む・保存する）
+  import { loadLevelId, saveLevelId, loadOpenStringEnabled, saveOpenStringEnabled, loadModeId, saveModeId } from "#lib/settings.js";
 
   // 判定のレベルの一覧と、レベルのデータを探す関数を読み込む
   import { LEVELS, DEFAULT_LEVEL_ID, getLevel } from "#lib/level.js";
@@ -36,16 +39,25 @@
   // 読み込んだ楽譜の五線譜を描く部品を読み込む
   import ImportedStaff from "#lib/ImportedStaff.svelte";
 
+  // 読み込んだ楽譜の「通し」モードの練習の部品を読み込む（ステップC-1）
+  import ImportedRunPractice from "#lib/ImportedRunPractice.svelte";
+
+  // お手本の時刻表を作る関数と、区間の部分だけを取り出す関数を読み込む（ステップC-1）
+  import { buildTimeline, sliceTimeline } from "#lib/importedTimeline.js";
+
+  // 「通し」の音程の最高点を記録する関数を読み込む（ステップC-1）
+  import { recordBestPitchScore } from "#lib/imported.js";
+
   // ===== 練習のモードに関する設定値（ステップB） =====
 
   // 選べる練習のモードの一覧（手入力の楽譜の練習ページと同じ）
   //   id          ：モードを区別するための名前
   //   name        ：画面に表示する名前
   //   description ：どんな練習なのかの短い説明
-  //   ready       ：もう使えるか（「通し」はステップCで作るまで false）
+  // （ステップC-1：「通し」を使えるようにした）
   const MODES = [
-    { id: "step", name: "じっくり", description: "合うまで次へ進まない", ready: true },
-    { id: "run", name: "通し", description: "準備中", ready: false },
+    { id: "step", name: "じっくり", description: "合うまで次へ進まない" },
+    { id: "run", name: "通し", description: "テンポに合わせて弾く。点数が出る" },
   ];
 
   // ===== 五線譜の色（ステップB） =====
@@ -93,6 +105,16 @@
 
   // 最後の音まで行ったら、最初の音に戻ってくり返すかどうか（true：くり返す）
   let repeatEnabled = $state(false);
+
+  // 選択中の練習のモードの id（'step'：じっくり、'run'：通し）（ステップC-1）
+  let modeId = $state("step");
+
+  // 「通し」のテンポ（♩＝○○）。最初は楽譜のテンポ。「通し」で変えたら、ページを開いている間は覚えておく（ステップC-1）
+  let runTempo = $state(80);
+
+  // 音程の最高点（まだ無いときは null）と、更新した直後かどうか（ステップC-1）
+  let bestPitchScore = $state(null);
+  let isNewRecord = $state(false);
 
   // ===== 練習する区間（ステップB） =====
 
@@ -167,6 +189,7 @@
     // 判定のレベルと開放弦の設定（手入力の楽譜の練習ページと共通）
     levelId = loadLevelId();
     openStringEnabled = loadOpenStringEnabled();
+    modeId = loadModeId(); // ステップC-1
 
     // URL の「?id=○○」の部分を取り出す（なければ null）
     const id = new URL(location.href).searchParams.get("id");
@@ -179,6 +202,8 @@
         excludedColors = getExcludedNoteColors(found.partMeasures);
         allTargets = buildTargets(found, true); // 全体の練習は、くり返しを展開した順
         repeatsExist = hasRepeats(found);
+        runTempo = found.tempo; // ステップC-1
+        bestPitchScore = typeof found.bestPitchScore === "number" ? found.bestPitchScore : null; // ステップC-1
       }
     }
 
@@ -231,6 +256,51 @@
     // 今の目標より後ろで、いちばん近いもの（なければ、いちばん前のもの）
     const after = indexes.find((index) => index > targetIndex);
     setTarget(after ?? indexes[0]);
+  }
+
+  /**
+   * 練習のモードを切り替える関数（ステップC-1）
+   * 「じっくり」「通し」のボタンを押したときに呼ばれる。選んだモードをブラウザに保存する（手入力の練習ページと共通）。
+   * @param {string} id - 選んだモードの id（'step'：じっくり、'run'：通し）
+   */
+  function changeMode(id) {
+    modeId = id;
+    saveModeId(id);
+  }
+
+  /**
+   * 「通し」の部品に渡す、お手本の時刻表を作る関数（ステップC-1）
+   * テンポを受け取って、今の区間（区間を決めていなければ全体）の時刻表を返す。
+   * 区間を決めたときの並び（くり返しを含めるか）と、同じ並びで作るので、番号がそろう。
+   * @param {number} tempo - テンポ（♩＝○○）
+   * @returns {object} 時刻表（importedTimeline.js の形）
+   */
+  function getTimeline(tempo) {
+    if (rangeStart === null) {
+      // 全体：くり返しを展開した並びの、最初から最後まで
+      const timeline = buildTimeline(record, tempo, true);
+      return sliceTimeline(timeline, 0, timeline.items.length - 1);
+    }
+    // 区間：区間を決めたときと同じ並び（くり返しのない楽譜では、いつも展開した並び）
+    const expand = repeatsExist ? rangeIncludesRepeats : true;
+    return sliceTimeline(buildTimeline(record, tempo, expand), rangeStart, rangeEnd);
+  }
+
+  /**
+   * 「通し」で最後まで弾けたときに、音程の最高点を記録する関数（ステップC-1）
+   * 区間を指定せずに、楽譜の全体を弾いたときだけ記録する（手入力の楽譜の「通し」と同じ決まり）。
+   * @param {number} points - その回の音程の点数（0〜100）
+   */
+  function handleRunFinish(points) {
+    if (rangeStart !== null) {
+      return;
+    }
+    const result = recordBestPitchScore(record.id, points);
+    if (result === null) {
+      return;
+    }
+    bestPitchScore = result.bestScore;
+    isNewRecord = result.isNewRecord;
   }
 
   /**
@@ -374,6 +444,21 @@
       <a class="fingerboard-link" href="/fingerboard?key={record.keyId}">指板で見る →</a>
     </div>
 
+    <!-- 音程の最高点（ステップC-1）：記録があるとき・区間を指定しているときに出す -->
+    {#if bestPitchScore !== null || rangeStart !== null}
+      <p class="best-row">
+        {#if bestPitchScore !== null}
+          最高点（音程） <strong>{bestPitchScore}点</strong>
+          {#if isNewRecord}
+            <span class="new-record">更新しました！</span>
+          {/if}
+        {/if}
+        {#if rangeStart !== null}
+          <span class="record-note">区間を指定しているときは、記録されません</span>
+        {/if}
+      </p>
+    {/if}
+
     <!-- 灰色の音の説明（灰色の音があるときだけ出す） -->
     {#if excludedColors.size > 0}
       <p class="note">灰色の音は、判定しない音です（音域の外の音・トリルなどの装飾の付いた音など）。</p>
@@ -402,10 +487,10 @@
       くり返す（最後の音まで行ったら、最初の音に戻る）
     </label>
 
-    <!-- 練習のモードの切り替え：名前と短い説明を付けたボタンを横に並べる（「通し」はステップCまで押せない） -->
+    <!-- 練習のモードの切り替え：名前と短い説明を付けたボタンを横に並べる（ステップC-1：「通し」も選べるようにした） -->
     <div class="mode-row">
       {#each MODES as mode (mode.id)}
-        <button class="mode-button" class:selected={mode.id === "step"} disabled={!mode.ready}>
+        <button class="mode-button" class:selected={modeId === mode.id} onclick={() => changeMode(mode.id)}>
           <span class="mode-name">{mode.name}</span>
           <span class="mode-description">{mode.description}</span>
         </button>
@@ -477,12 +562,31 @@
         <button class="range-cancel-button" onclick={closeRangeSelector}>キャンセル</button>
       </div>
     {:else}
-      <!-- ===== 練習の部品（ステップB：「じっくり」） ===== -->
+      <!-- ===== 練習の部品（ステップB：「じっくり」、ステップC-1：「通し」） ===== -->
       <!-- key で囲むと、rangeKey（区間の目印）が変わったときに、中の部品が作り直される（最初の音からやり直す） -->
+      <!-- モードを切り替えると、前のモードの部品は画面から消え、マイクも自動で止まる -->
       <div class="practice-area">
         {#key rangeKey}
-          <!-- 五線譜の部分は、上の importedStaff で描く（staff に渡す） -->
-          <StepPractice notes={practiceNotes} {currentKey} temperamentId={record.temperamentId} {tolerance} {allowOpenString} {repeatEnabled} staff={importedStaff} />
+          {#if modeId === "run"}
+            <!-- 「通し」：時刻表を作る関数・テンポ・最高点を記録する関数などを渡す -->
+            <ImportedRunPractice
+              score={renderScoreData}
+              baseColors={excludedColors}
+              {getTimeline}
+              {currentKey}
+              initialTempo={runTempo}
+              temperamentId={record.temperamentId}
+              {tolerance}
+              {allowOpenString}
+              {repeatEnabled}
+              staffHeight={STAFF_HEIGHT_PRACTICE}
+              ontempochange={(value) => (runTempo = value)}
+              onfinish={handleRunFinish}
+            />
+          {:else}
+            <!-- 「じっくり」：五線譜の部分は、上の importedStaff で描く（staff に渡す） -->
+            <StepPractice notes={practiceNotes} {currentKey} temperamentId={record.temperamentId} {tolerance} {allowOpenString} {repeatEnabled} staff={importedStaff} />
+          {/if}
         {/key}
       </div>
     {/if}
@@ -537,6 +641,32 @@
     font-size: 0.85rem;
     color: #1976d2;
     text-decoration: none;
+  }
+
+  /* 音程の最高点の行（ステップC-1） */
+  .best-row {
+    margin: 6px 0 0 0;
+    font-size: 0.85rem;
+    color: #616161;
+  }
+
+  /* 最高点の数字：緑の太字 */
+  .best-row strong {
+    color: #2e7d32;
+  }
+
+  /* 「更新しました！」：オレンジの太字 */
+  .new-record {
+    margin-left: 6px;
+    font-weight: bold;
+    color: #e65100;
+  }
+
+  /* 「区間を指定しているときは、記録されません」：小さく */
+  .record-note {
+    margin-left: 6px;
+    font-size: 0.8rem;
+    color: #9e9e9e;
   }
 
   /* 灰色の音の説明：小さく表示する */
