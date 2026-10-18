@@ -2,6 +2,7 @@
   // 「じっくり」モードの練習の部品
   // 目標の音を1つずつ表示し、マイクの音とのズレをメーターで見せる。
   // 音程が合った状態を一定時間保てたら、次の音へ進む。
+  // （ステップB：五線譜の部分だけを、使う側から差し替えられるようにした（staff）。読み込んだ楽譜の練習ページで使う）
 
   // onMount：この部品が画面に表示された直後に処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -39,7 +40,14 @@
   // tolerance     ：「OK」とする範囲（セント）。判定のレベルによって変わる
   // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか（true：する）
   // repeatEnabled  ：最後の音まで弾けたら、最初の音に戻ってくり返すかどうか（true：くり返す）
-  let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled } = $props();
+  // staff          ：五線譜の部分を差し替えるときに渡す、描き方のまとまり（Svelte の snippet）（ステップB）
+  //                  渡さなければ、今までどおりの五線譜（Staff）を出す
+  //                  渡すときは、次の3つを受け取って描く：
+  //                    targetIndex … 今の目標の音が何番目か（0から）
+  //                    passed      … 通過した音の位置に true が入った配列
+  //                    setTarget   … 目標の音を変える関数（音符をタップしたときに、番号を渡して呼ぶ）
+  //                  null が初期値（渡されなかったとき）
+  let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled, staff = null } = $props();
 
   // ===== 判定に関する設定値 =====
 
@@ -500,7 +508,12 @@
 <!-- 五線譜（目標の音を、編集ページの「選択中」と同じ青で表示する） -->
 <!-- passed を渡して、通過した音符を緑で表示する -->
 <!-- 音符をタップすると、その音を目標にする -->
-<Staff {notes} signature={currentKey.signature} selectedIndex={targetIndex} {passed} onselect={setTarget} />
+<!-- （ステップB：使う側から staff を渡されたときは、そちらで描く。読み込んだ楽譜の練習ページで使う） -->
+{#if staff !== null}
+  {@render staff(targetIndex, passed, setTarget)}
+{:else}
+  <Staff {notes} signature={currentKey.signature} selectedIndex={targetIndex} {passed} onselect={setTarget} />
+{/if}
 
 <!-- 目標の音の表示 -->
 <div class="target-area">

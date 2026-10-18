@@ -1,6 +1,7 @@
 // 読み込んだ楽譜（MusicXML から読み込んだ、練習専用の楽譜）を扱うファイル（ステップA-1a）
 // （ステップA-1b：同じ名前を探す・名前に (2) を付ける・上書き・削除の関数を足した）
 // （ステップA-2：id で1つ探す・五線譜に描く形にする・灰色にする音符の表を作る関数を足した）
+// （ステップB：判定する音の並びを作る・区間を決める・くり返しがあるかを調べる関数を足した）
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -30,6 +31,9 @@ import { KEYS } from "#lib/key.js";
 
 // 今選ばれている音律を読み込む関数を読み込む
 import { loadTemperamentId } from "#lib/settings.js";
+
+// くり返しをたどった「鳴らす小節の順番」を作る関数を読み込む（楽譜作成アプリからコピーしたもの）（ステップB）
+import { playOrder } from "#lib/musicxml/playback.js";
 
 // ===== ブラウザに保存するための設定値 =====
 
@@ -486,4 +490,141 @@ export function getExcludedNoteColors(partMeasures) {
   });
 
   return colors;
+}
+
+// ===== 判定する音の並び（ステップB） =====
+//
+// 【判定する音1つ分の形】
+// {
+//   note:      { step, accidental, octave }  … 音程チェックアプリの音の形（score.js と同じ。重音ならいちばん上の音）
+//   positions: [{ measure, note }, ...]      … この音にあたる、五線譜の音符の場所（タイでつながった音符は全部入る）
+// }
+
+// 楽譜作成アプリの音名（"C"〜"B"）から、音程チェックアプリの音名の番号（0〜6。0 がド）への表
+const STEP_INDEX = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
+
+/**
+ * 楽譜作成アプリの音の高さを、音程チェックアプリの音の形にする関数（このファイルの中だけで使う）（ステップB）
+ * @param {{step: string, alter: number, octave: number}} pitch - 楽譜作成アプリの音の高さ（例：{ step: 'F', alter: 1, octave: 5 }）
+ * @returns {{step: number, accidental: number, octave: number}} 音程チェックアプリの音の形（例：{ step: 3, accidental: 1, octave: 5 }）
+ */
+function toPitchNote(pitch) {
+  return { step: STEP_INDEX[pitch.step], accidental: pitch.alter ?? 0, octave: pitch.octave };
+}
+
+/**
+ * 判定する音の並びを作る関数（ステップB）
+ * ・くり返しを展開するときは、楽譜作成アプリの再生と同じ順番（playOrder）で小節をたどる
+ * ・タイでつながった音符は、1つの音にまとめる（くり返しで戻った所では、タイを切る）
+ * ・休符と、判定から外す音（灰色の音。タイでつながった後ろの音符も）は入れない
+ * ・重音は、いちばん上の音を目標にする
+ * @param {object} record - 読み込んだ楽譜
+ * @param {boolean} expandRepeats - くり返しを展開するなら true、書いてある順に1回ずつなら false
+ * @returns {object[]} 判定する音の並び（このまとまりの先頭の説明の形）
+ */
+export function buildTargets(record, expandRepeats) {
+  // 小節をたどる順番（展開しないときは、0, 1, 2, … と書いてある順）
+  const order = expandRepeats ? playOrder(toRenderScore(record), 0) : record.partMeasures.map((_, i) => i);
+
+  const targets = [];
+
+  // 1つ前の音符・休符と、それが「判定する音」として入った先（入っていなければ null）
+  let previous = null;
+  let previousTarget = null;
+
+  order.forEach((i, s) => {
+    // くり返しで戻った所（前の小節のすぐ次ではない所）では、タイを切る
+    if (s > 0 && i !== order[s - 1] + 1) {
+      previous = null;
+      previousTarget = null;
+    }
+
+    record.partMeasures[i].notes.forEach((note, j) => {
+      // 前の音からタイでつながってきた音符か
+      const isTiedFromPrevious = previous !== null && !previous.rest && previous.tie;
+      previous = note;
+
+      // 休符：入れない（タイのつながりも切れる）
+      if (note.rest) {
+        previousTarget = null;
+        return;
+      }
+
+      // タイの続き：前の音（判定する音なら）に、この音符の場所を足すだけ
+      if (isTiedFromPrevious) {
+        if (previousTarget !== null) {
+          previousTarget.positions.push({ measure: i, note: j });
+        }
+        return;
+      }
+
+      // 判定から外す音：入れない（このあとタイでつながる音符も、previousTarget が null なので入らない）
+      if (getExcludeReason(note) !== null) {
+        previousTarget = null;
+        return;
+      }
+
+      // 判定する音：重音ならいちばん上の音（notePitches は低い順なので最後）
+      const pitches = notePitches(note);
+      const target = { note: toPitchNote(pitches[pitches.length - 1]), positions: [{ measure: i, note: j }] };
+      targets.push(target);
+      previousTarget = target;
+    });
+  });
+
+  return targets;
+}
+
+/**
+ * 楽譜に、くり返し（‖: :‖・1番2番かっこ・D.C. など）があるかを調べる関数（ステップB）
+ * 区間を選ぶときに「くり返しを含める」のチェックを出すかどうかに使う。
+ * @param {object} record - 読み込んだ楽譜
+ * @returns {boolean} くり返しがあれば true
+ */
+export function hasRepeats(record) {
+  // くり返しをたどった順番が、書いてある順（0, 1, 2, …）と違えば、くり返しがある
+  const order = playOrder(toRenderScore(record), 0);
+  return order.length !== record.partMeasures.length || order.some((i, k) => i !== k);
+}
+
+/**
+ * 五線譜の音符の場所が、判定する音の並びの何番目にあたるかを、全部探す関数（ステップB）
+ * くり返しを展開した並びでは、同じ音符が2回以上出てくることがあるので、全部の番号を返す。
+ * @param {object[]} targets - 判定する音の並び
+ * @param {{measure: number, note: number}} position - 五線譜の音符の場所
+ * @returns {number[]} 番号（0から）の配列（小さい順）。判定する音でない音符（休符・灰色の音）なら空の配列
+ */
+export function findTargetIndexes(targets, position) {
+  const indexes = [];
+  targets.forEach((target, index) => {
+    if (target.positions.some((p) => p.measure === position.measure && p.note === position.note)) {
+      indexes.push(index);
+    }
+  });
+  return indexes;
+}
+
+/**
+ * 区間を選ぶときにタップした2つの音符から、区間（判定する音の並びの、始めと終わりの番号）を決める関数（ステップB）
+ * 前にあるほうを始め、後ろにあるほうを終わりにする（終わりの音符を先にタップしてもよい）。
+ * くり返しを展開した並びでは、始めは「その音符の1回目」、終わりは「その音符の最後の回」にする。
+ * @param {object[]} targets - 判定する音の並び
+ * @param {{measure: number, note: number}} first - 1回目にタップした音符の場所
+ * @param {{measure: number, note: number}} second - 2回目にタップした音符の場所
+ * @returns {{start: number, end: number}|null} 区間の番号（0から）。どちらかが判定する音でないときは null
+ */
+export function findRange(targets, first, second) {
+  const firstIndexes = findTargetIndexes(targets, first);
+  const secondIndexes = findTargetIndexes(targets, second);
+  if (firstIndexes.length === 0 || secondIndexes.length === 0) {
+    return null;
+  }
+
+  // 始め：2つの音符の「1回目」のうち、前にあるほう
+  const start = Math.min(firstIndexes[0], secondIndexes[0]);
+
+  // 終わり：2つの音符の「最後の回」のうち、後ろにあるほう
+  const end = Math.max(firstIndexes[firstIndexes.length - 1], secondIndexes[secondIndexes.length - 1]);
+
+  return { start: start, end: end };
 }
