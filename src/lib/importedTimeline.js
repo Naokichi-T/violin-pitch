@@ -1,4 +1,5 @@
 // 読み込んだ楽譜の「お手本の時刻表」を作るファイル（ステップC-1）
+// （ステップC-2：流れる縦線の目じるし cursorKeys を足した）
 // 「通し」で、判定する音ごとに「何秒から何秒まで鳴るか」を決める。
 // 時刻の計算は、楽譜作成アプリ（string-score）の再生の計算（playback.js の buildEvents）をそのまま使うので、
 // テンポの変化・rit.・accel.・a tempo・フェルマータ・カエスーラ・くり返し・アウフタクトが、再生とぴったり同じになる。
@@ -15,6 +16,9 @@
 //     }
 //   ],
 //   clicks: [{ time, strong }, ...]  … 拍の頭の時刻（秒）と、1拍目かどうか（カウントとメトロノームに使う）
+//   cursorKeys: [{ time, measure, note }, ...] … 流れる縦線の「目じるし」（ステップC-2）
+//               この時刻に、縦線がこの場所にある、という点を時刻の順に並べたもの。点と点の間は、なめらかに動かす
+//               note が数字なら、その音符の位置。note が "start" なら小節の音符の始まり、"end" なら小節の右端
 //   beatSeconds: 0.75                … 最初の音のあたりの、1拍の長さ（秒）（カウントの間に使う）
 // }
 
@@ -123,7 +127,47 @@ export function buildTimeline(record, tempo, expandRepeats) {
   // 拍の頭の時刻（秒）
   const clicks = result.clicks.map((click) => ({ time: click.startTick * tickSeconds, strong: click.strong }));
 
-  return { items: items, clicks: clicks, beatSeconds: beatSecondsAt(score, items, tickSeconds) };
+  // 流れる縦線の目じるし（ステップC-2）
+  const cursorKeys = buildCursorKeys(result, tickSeconds);
+
+  return { items: items, clicks: clicks, beatSeconds: beatSecondsAt(score, items, tickSeconds), cursorKeys: cursorKeys };
+}
+
+/**
+ * 流れる縦線の目じるしを作る関数（このファイルの中だけで使う）（ステップC-2）
+ * 小節ごと（くり返しで2回目に来た小節も、もう一度）に、
+ *   小節の始まり（"start"）→ 小節の中の音符（灰色の音も。休符は入らないので、休符の上は前後の目じるしの間をなめらかに動く）→ 小節の終わり（"end"）
+ * の順に並べる。小節の終わりと、次の小節の始まりは同じ時刻なので、段が変わるときや、くり返しで戻るときは、縦線がそこへ跳ぶ。
+ * @param {object} result - 鳴らす音の一覧（buildEvents の結果）
+ * @param {number} tickSeconds - 1ティックが何秒か
+ * @returns {{time: number, measure: number, note: number|string}[]} 目じるしの並び（時刻の順）
+ */
+function buildCursorKeys(result, tickSeconds) {
+  const keys = [];
+  const starts = result.measureStarts; // 鳴らす順の小節ごとの { measure, startTick }
+
+  starts.forEach((start, k) => {
+    // この小節（この回）の、始まりと終わりの時刻（ティック）。終わりは、次の小節の始まり（最後の小節なら、曲の終わり）
+    const from = start.startTick;
+    const to = k + 1 < starts.length ? starts[k + 1].startTick : result.totalTicks;
+
+    keys.push({ time: from * tickSeconds, measure: start.measure, note: "start" });
+
+    // この小節（この回）の中で鳴る音符（同じ小節番号で、始まりの時刻がこの回の間にあるもの）
+    result.highlights.forEach((h) => {
+      if (h.measure === start.measure && h.startTick >= from && h.startTick < to) {
+        keys.push({ time: h.startTick * tickSeconds, measure: h.measure, note: h.note });
+      }
+    });
+
+    keys.push({ time: to * tickSeconds, measure: start.measure, note: "end" });
+  });
+
+  // 時刻の順に並べ直す（同じ時刻なら、もとの順番のまま）
+  return keys
+    .map((key, index) => ({ key, index }))
+    .sort((a, b) => a.key.time - b.key.time || a.index - b.index)
+    .map((item) => item.key);
 }
 
 /**
@@ -171,5 +215,7 @@ export function sliceTimeline(timeline, startIndex, endIndex) {
     // 区間の中の拍の頭だけを残して、同じようにずらす
     clicks: timeline.clicks.filter((click) => click.time >= anchor - 1e-6 && click.time < lastEnd - 1e-6).map((click) => ({ ...click, time: click.time - anchor })),
     beatSeconds: beatSeconds,
+    // 流れる縦線の目じるしも、区間の中だけを残して、同じようにずらす（ステップC-2）
+    cursorKeys: timeline.cursorKeys.filter((key) => key.time >= anchor - 1e-6 && key.time <= lastEnd + 1e-6).map((key) => ({ ...key, time: key.time - anchor })),
   };
 }

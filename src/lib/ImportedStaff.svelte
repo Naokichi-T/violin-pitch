@@ -7,6 +7,7 @@
   // （ステップC-1：五線譜の上に、透明な「重ねる層」を足した（overlayBands・overlayMarks）。
   //   「通し」の演奏中は、色が変わるたびに五線譜を全部描き直すと間に合わないので、この層にだけ描く。
   //   そのため、描き直し・自動スクロール・重ねる層を、それぞれ別の $effect に分けた）
+  // （ステップC-2：流れる縦線（cursorKeys・cursorTime）を足した。縦線は、もう1枚の重ねる層に描き、時刻が変わるたびに位置だけを動かす）
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // tick：画面の書き換えが終わるのを待つための仕組み（描いたあとにスクロールするときに使う）
@@ -33,7 +34,10 @@
   //               変わっても、五線譜は描き直さず、重ねる層だけを描き直す（「通し」の今の音に使う）
   // overlayMarks：重ねる層に描く、音符の下の小さな印の配列 [{ position: { measure, note }, color, text: "●" }, ...]（ステップC-1）
   //               変わっても、五線譜は描き直さない（「通し」の判定の結果に使う）
-  let { score, noteColors = new Map(), onselect = null, focus = null, maxHeight = null, bands = [], overlayBands = [], overlayMarks = [] } = $props();
+  // cursorKeys  ：流れる縦線の目じるしの並び（importedTimeline.js の cursorKeys）（ステップC-2）
+  // cursorTime  ：流れる縦線を出す時刻（秒。時刻表と同じ数え方）。null のときは縦線を出さない（ステップC-2）
+  //               1秒に何十回も変わるが、五線譜も重ねる層も描き直さず、縦線の位置だけを動かす
+  let { score, noteColors = new Map(), onselect = null, focus = null, maxHeight = null, bands = [], overlayBands = [], overlayMarks = [], cursorKeys = [], cursorTime = null } = $props();
 
   // ===== 描き方の設定値 =====
 
@@ -63,6 +67,12 @@
   // SVG の部品を作るときに使う決まった名前（createElementNS に渡す）
   const SVG_NS = "http://www.w3.org/2000/svg";
 
+  // 流れる縦線の見た目（ステップC-2）
+  const CURSOR_COLOR = "#e65100"; // 色（「通し」の今の音と同じオレンジ）
+  const CURSOR_WIDTH = 2; // 線の太さ（ピクセル）
+  const CURSOR_EXTEND = 12; // 五線の上と下に、どれだけはみ出させるか（ピクセル）
+  const CURSOR_END_INSET = 3; // 小節の右端の目じるしを、小節線からどれだけ左に置くか（ピクセル。小節線と重ならないように）
+
   // ===== 描くのに使う値 =====
 
   // VexFlow の部品一式（読み込みが終わるまでは null）
@@ -80,6 +90,17 @@
 
   // 重ねる層（透明な SVG）（ステップC-1）
   let overlay = $state(null);
+
+  // 流れる縦線を描く、もう1枚の重ねる層と、その中の縦線（ステップC-2）
+  let cursorLayer = $state(null);
+  let cursorLine = $state(null);
+
+  // 流れる縦線の目じるしを、五線譜の上の位置にしたもの [{ time, x, top }, ...]（ステップC-2）
+  // 五線譜を描き直したとき・目じるしが変わったときに作り直す（毎回作ると重いので、作っておいて使い回す）
+  let cursorPoints = [];
+
+  // 縦線の位置を探すときの手がかりの番号（前から順に進むので、毎回最初から探さなくてよいように）（ステップC-2）
+  let cursorSearchIndex = 0;
 
   // 最後に描いたときの、音符ごとの当たり判定の四角の一覧（renderScore が返すもの）（ステップB）
   // タップした音符を探すのと、自動スクロールで段の位置を調べるのに使う（画面には出さないので $state は付けない）
@@ -134,6 +155,111 @@
       drawOverlay(bandsToDraw, marksToDraw);
     }
   });
+
+  // ④ 流れる縦線の目じるしを、五線譜の上の位置にする係：目じるしか、描いた回数が変わったときに動く（ステップC-2）
+  $effect(() => {
+    const keys = cursorKeys;
+    renderVersion; // 描き直したときにも動くように、読んでおく
+    cursorPoints = container !== null ? buildCursorPoints(keys) : [];
+    cursorSearchIndex = 0;
+    // 位置を作り直したら、今の時刻の位置に置き直す（untrack：cursorTime の変化では、この係は動かない）
+    untrack(() => moveCursor(cursorTime));
+  });
+
+  // ⑤ 流れる縦線を動かす係：時刻が変わるたびに、縦線の位置だけを変える（ステップC-2）
+  $effect(() => {
+    moveCursor(cursorTime);
+  });
+
+  /**
+   * 流れる縦線の目じるしを、五線譜の上の位置（横の位置と、五線の上端の高さ）にする関数（ステップC-2）
+   * 音符の目じるしは、その音符の横のまん中。小節の始まりは、その小節の最初の音符（休符も）の左端。小節の終わりは、小節線の少し左。
+   * @param {{time: number, measure: number, note: number|string}[]} keys - 目じるしの並び
+   * @returns {{time: number, x: number, top: number}[]} 位置の並び（見つからない目じるしは入れない）
+   */
+  function buildCursorPoints(keys) {
+    const svg = container.querySelector("svg");
+    if (svg === null) {
+      return [];
+    }
+
+    // 小節ごとの五線（VexFlow は、1つのパートの五線を、小節の順に描いている）
+    const staves = [...svg.querySelectorAll(".vf-stave")].map((stave) => stave.getBBox());
+
+    const points = [];
+    keys.forEach((key) => {
+      const stave = staves[key.measure];
+      if (stave === undefined) {
+        return;
+      }
+      let x = null;
+      if (key.note === "end") {
+        // 小節の終わり：小節線の少し左
+        x = stave.x + stave.width - CURSOR_END_INSET;
+      } else if (key.note === "start") {
+        // 小節の始まり：その小節の最初の音符（休符も）の左端
+        const first = hitBoxes.find((box) => box.measure === key.measure);
+        x = first !== undefined ? first.x : stave.x;
+      } else {
+        // 音符：その音符の横のまん中
+        const box = hitBoxes.find((item) => item.measure === key.measure && item.note === key.note);
+        if (box !== undefined) {
+          x = box.x + box.w / 2;
+        }
+      }
+      if (x !== null) {
+        points.push({ time: key.time, x: x, top: stave.y });
+      }
+    });
+    return points;
+  }
+
+  /**
+   * 流れる縦線を、時刻に合った位置に動かす関数（ステップC-2）
+   * 時刻の前後の目じるしの間を、時間の割合でなめらかに動かす。
+   * @param {number|null} time - 時刻（秒）。null なら縦線を隠す
+   */
+  function moveCursor(time) {
+    if (cursorLine === null) {
+      return;
+    }
+    if (time === null || cursorPoints.length === 0) {
+      cursorLine.setAttribute("visibility", "hidden");
+      return;
+    }
+
+    // 重ねる層を、五線譜（SVG）とぴったり同じ位置・大きさにする
+    const svg = container.querySelector("svg");
+    if (svg !== null) {
+      cursorLayer.setAttribute("width", svg.getAttribute("width"));
+      cursorLayer.setAttribute("height", svg.getAttribute("height"));
+      cursorLayer.style.left = container.offsetLeft + "px";
+      cursorLayer.style.top = container.offsetTop + "px";
+    }
+
+    // time より前（同じ時刻も）の、いちばん後ろの目じるしの番号を探す（ふつうは前回の続きなので、手がかりから進める）
+    if (cursorSearchIndex >= cursorPoints.length || cursorPoints[cursorSearchIndex].time > time) {
+      cursorSearchIndex = 0; // 時刻が戻ったとき（くり返しの2回目など）は、最初から探す
+    }
+    while (cursorSearchIndex + 1 < cursorPoints.length && cursorPoints[cursorSearchIndex + 1].time <= time) {
+      cursorSearchIndex += 1;
+    }
+    const from = cursorPoints[cursorSearchIndex];
+    const to = cursorPoints[cursorSearchIndex + 1];
+
+    // 前後の目じるしの間を、時間の割合で動かす（同じ段のときだけ。最後の目じるしより後ろは、最後の目じるしの位置）
+    let x = from.x;
+    if (to !== undefined && to.top === from.top && to.time > from.time && time > from.time) {
+      const rate = Math.min(1, (time - from.time) / (to.time - from.time));
+      x = from.x + (to.x - from.x) * rate;
+    }
+
+    cursorLine.setAttribute("x1", String(x));
+    cursorLine.setAttribute("x2", String(x));
+    cursorLine.setAttribute("y1", String(from.top - CURSOR_EXTEND));
+    cursorLine.setAttribute("y2", String(from.top + STAFF_HEIGHT + CURSOR_EXTEND));
+    cursorLine.setAttribute("visibility", "visible");
+  }
 
   /**
    * 音符を囲む帯の四角の位置と大きさを求める関数（ステップC-1：drawBands から取り出して、重ねる層でも使えるようにした）
@@ -391,6 +517,11 @@
   <!-- 重ねる層：五線譜の上にぴったり重ねる透明な SVG（ステップC-1） -->
   <!-- pointer-events: none（下の style）で、タップは下の五線譜に通す -->
   <svg class="overlay" bind:this={overlay} aria-hidden="true"></svg>
+
+  <!-- 流れる縦線の層（ステップC-2）。縦線は1本だけ作っておき、位置だけを動かす -->
+  <svg class="overlay" bind:this={cursorLayer} aria-hidden="true">
+    <line bind:this={cursorLine} stroke={CURSOR_COLOR} stroke-width={CURSOR_WIDTH} stroke-linecap="round" visibility="hidden" />
+  </svg>
 </div>
 
 <style>

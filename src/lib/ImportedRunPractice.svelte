@@ -9,6 +9,11 @@
   // 色が変わるたびに五線譜を全部描き直すと、速い曲やスマホでは間に合わないので、
   // 演奏中は五線譜の上の「重ねる層」にだけ描く（今の音のオレンジの帯と、判定した音の下の小さな印）。
   // 最後まで弾き終わったら、五線譜を1回だけ描き直して、音符そのものを結果の色にする。
+  //
+  // 【リズムのヒント】（ステップC-2）
+  // ・流れる縦線：五線譜の上を、お手本の時刻表どおりに、なめらかに流れる（最初は入）
+  // ・メトロノーム：演奏中、拍の頭でクリックを鳴らす（1拍目は高い音。最初は切）
+  // 入・切は、ブラウザに覚えておく
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -31,10 +36,12 @@
   import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
 
   // メトロノームの音を鳴らす関数と、合図の音を鳴らす関数を読み込む
-  import { playClick, playChime } from "#lib/audio.js";
+  // （ステップC-2：演奏中のメトロノームのために、時刻を決めてクリックを鳴らす関数と、音の時計の今の時刻を返す関数も読み込む）
+  import { playClick, playChime, scheduleClick, getAudioTime } from "#lib/audio.js";
 
   // カウントの拍の数を、ブラウザに保存する関数と読み込む関数を読み込む（今の「通し」と共通の設定）
-  import { loadCountInBeats, saveCountInBeats } from "#lib/settings.js";
+  // （ステップC-2：流れる縦線・メトロノームの入・切を、読み込む関数と保存する関数も読み込む）
+  import { loadCountInBeats, saveCountInBeats, loadRunCursorEnabled, saveRunCursorEnabled, loadRunMetronomeEnabled, saveRunMetronomeEnabled } from "#lib/settings.js";
 
   // 1つの音の、どこから判定に使いはじめるか（頭の4割をよける）を読み込む
   import { JUDGE_START_RATIO } from "#lib/importedTimeline.js";
@@ -148,6 +155,15 @@
   // エラーメッセージ（マイクが使えなかったときなど）
   let errorMessage = $state("");
 
+  // 流れる縦線を出すかどうか（true：出す）（ステップC-2）
+  let cursorEnabled = $state(true);
+
+  // 演奏中にメトロノームを鳴らすかどうか（true：鳴らす）（ステップC-2）
+  let metronomeEnabled = $state(false);
+
+  // 流れる縦線を出す時刻（秒。時刻表と同じ数え方）。出さないときは null（ステップC-2）
+  let cursorTime = $state(null);
+
   // 練習する範囲のお手本の時刻表（テンポが変わるたびに作り直す）
   // $derived を付けると、tempo が変わるたびに自動で計算し直される
   let timeline = $derived(getTimeline(tempo));
@@ -181,6 +197,9 @@
 
   // 今の回で、最初の音が始まったか（くり返しの2回目からは、最初の音が始まったときに前の回の結果を消す）
   let roundStarted = false;
+
+  // メトロノームで、次に鳴らす拍の頭の番号（時刻表の clicks の何番目か）（ステップC-2）
+  let nextClickIndex = 0;
 
   // ===== 計算で決まる値 =====
 
@@ -263,12 +282,39 @@
   });
 
   // この部品が画面に表示されたときに、前回保存したカウントの拍の数を読み込む
+  // （ステップC-2：流れる縦線・メトロノームの入・切も読み込む）
   onMount(() => {
     const saved = loadCountInBeats();
     if (saved !== null) {
       countInBeats = clampCountIn(saved);
     }
+    cursorEnabled = loadRunCursorEnabled();
+    metronomeEnabled = loadRunMetronomeEnabled();
   });
+
+  /**
+   * 流れる縦線の入・切を切り替える関数（チェックボックス）（ステップC-2）
+   * 演奏中でも切り替えられる。切り替えたら、ブラウザに保存する。
+   * @param {boolean} enabled - チェックが入っているか
+   */
+  function changeCursorEnabled(enabled) {
+    cursorEnabled = enabled;
+    saveRunCursorEnabled(enabled);
+    // 切にしたら、すぐに縦線を消す（入にしたときは、次の画面の書き換えで出る）
+    if (!enabled) {
+      cursorTime = null;
+    }
+  }
+
+  /**
+   * メトロノームの入・切を切り替える関数（チェックボックス）（ステップC-2）
+   * 演奏中でも切り替えられる（次の拍から鳴る・止まる）。切り替えたら、ブラウザに保存する。
+   * @param {boolean} enabled - チェックが入っているか
+   */
+  function changeMetronomeEnabled(enabled) {
+    metronomeEnabled = enabled;
+    saveRunMetronomeEnabled(enabled);
+  }
 
   // この部品が画面から消えるときに、進行を止める
   onDestroy(() => {
@@ -382,6 +428,7 @@
     cursor = 0;
     samples = runTimeline.items.map(() => []);
     roundStarted = false;
+    nextClickIndex = 0; // ステップC-2
     currentIndex = null;
     startTime = performance.now();
     phase = "countIn";
@@ -415,6 +462,9 @@
         clickedCount = beat + 1;
       }
       countInRemaining = roundCountInBeats - beat;
+
+      // カウントの間、流れる縦線は、最初の目じるし（時刻 0）の所で待つ（ステップC-2）
+      cursorTime = cursorEnabled ? 0 : null;
     } else {
       // ----- 演奏中 -----
       if (!roundStarted) {
@@ -441,6 +491,19 @@
         currentIndex = nowIndex;
       }
 
+      // 流れる縦線を、今の時刻に動かす（ステップC-2）
+      cursorTime = cursorEnabled ? t : null;
+
+      // メトロノーム：時刻が来た拍の頭のクリックを鳴らす（入のときだけ。切のときも、番号は進めておく）（ステップC-2）
+      // 拍の頭の時刻は、お手本の時刻表どおり（rit. ではだんだん間が広がり、フェルマータでは待つ）
+      while (nextClickIndex < runTimeline.clicks.length && runTimeline.clicks[nextClickIndex].time <= t) {
+        if (metronomeEnabled) {
+          // すぐに鳴らす（1拍目は高い音）
+          scheduleClick(getAudioTime(), runTimeline.clicks[nextClickIndex].strong);
+        }
+        nextClickIndex += 1;
+      }
+
       // 最後の音が終わった
       if (nextJudgeIndex >= items.length) {
         finishRound();
@@ -459,6 +522,7 @@
   function finishRound() {
     playChime(FINISH_CHIME_FREQUENCIES);
     currentIndex = null;
+    cursorTime = null; // 流れる縦線を消す（ステップC-2）
 
     // この回の点数を、練習ページに伝える（最高点を記録するため）
     onfinish(totalScore);
@@ -579,11 +643,25 @@
     stopMicrophone();
     phase = "idle";
     currentIndex = null;
+    cursorTime = null; // 流れる縦線を消す（ステップC-2）
   }
 </script>
 
 <!-- 五線譜：演奏中は、重ねる層に今の音の帯と結果の印を描く。終わったら、音符そのものを結果の色にする -->
-<ImportedStaff {score} noteColors={staffColors} {overlayBands} {overlayMarks} focus={focusPosition} maxHeight={staffHeight} onselect={selectNote} />
+<!-- （ステップC-2：流れる縦線の目じるしと時刻も渡す） -->
+<ImportedStaff {score} noteColors={staffColors} {overlayBands} {overlayMarks} cursorKeys={timeline.cursorKeys} {cursorTime} focus={focusPosition} maxHeight={staffHeight} onselect={selectNote} />
+
+<!-- リズムのヒントの入・切（ステップC-2）。演奏中でも切り替えられる -->
+<div class="hint-row">
+  <label class="hint-label">
+    <input type="checkbox" checked={cursorEnabled} onchange={(event) => changeCursorEnabled(event.currentTarget.checked)} />
+    流れる縦線
+  </label>
+  <label class="hint-label">
+    <input type="checkbox" checked={metronomeEnabled} onchange={(event) => changeMetronomeEnabled(event.currentTarget.checked)} />
+    メトロノーム
+  </label>
+</div>
 
 <!-- 今の状態の表示 -->
 <div class="status-area">
@@ -682,6 +760,22 @@
 </details>
 
 <style>
+  /* リズムのヒントの入・切の行：チェックボックスを横に並べる（ステップC-2） */
+  .hint-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin-top: 6px;
+    font-size: 0.9rem;
+  }
+
+  /* チェックボックスと文字 */
+  .hint-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
   /* 今の状態の表示のエリア：中央に寄せる */
   .status-area {
     margin-top: 4px;

@@ -452,3 +452,63 @@ export function loadMetronomeBeats() {
 export function saveMetronomeBeats(beats) {
   localStorage.setItem(METRONOME_BEATS_KEY, String(beats));
 }
+
+// ===== 読み込んだ楽譜の「通し」のリズムのヒント（流れる縦線・メトロノーム）（ステップC-2） =====
+
+// 流れる縦線の入・切を保存するときの名前（キー）
+const RUN_CURSOR_ENABLED_KEY = "violin-pitch:runCursorEnabled";
+
+// メトロノームの入・切を保存するときの名前（キー）
+const RUN_METRONOME_ENABLED_KEY = "violin-pitch:runMetronomeEnabled";
+
+/**
+ * 保存しておいた「流れる縦線」の入・切を読み込む関数（ステップC-2）
+ * @returns {boolean} true：入、false：切。保存していないときは true（最初は入）
+ */
+export function loadRunCursorEnabled() {
+  try {
+    // 「false」と保存してあるときだけ切にする。保存していないときや、それ以外の内容のときは入
+    return localStorage.getItem(RUN_CURSOR_ENABLED_KEY) !== "false";
+  } catch (error) {
+    // 保存領域を使えないときは、最初の設定（入）
+    return true;
+  }
+}
+
+/**
+ * 「流れる縦線」の入・切をブラウザに保存する関数（ステップC-2）
+ * @param {boolean} enabled - true：入、false：切
+ */
+export function saveRunCursorEnabled(enabled) {
+  try {
+    localStorage.setItem(RUN_CURSOR_ENABLED_KEY, String(enabled));
+  } catch (error) {
+    // 保存領域を使えないときは、何もしない（次に開いたときは最初の設定になる）
+  }
+}
+
+/**
+ * 保存しておいた「メトロノーム」の入・切を読み込む関数（ステップC-2）
+ * @returns {boolean} true：入、false：切。保存していないときは false（最初は切）
+ */
+export function loadRunMetronomeEnabled() {
+  try {
+    // 「true」と保存してあるときだけ入にする。保存していないときや、それ以外の内容のときは切
+    return localStorage.getItem(RUN_METRONOME_ENABLED_KEY) === "true";
+  } catch (error) {
+    // 保存領域を使えないときは、最初の設定（切）
+    return false;
+  }
+}
+
+/**
+ * 「メトロノーム」の入・切をブラウザに保存する関数（ステップC-2）
+ * @param {boolean} enabled - true：入、false：切
+ */
+export function saveRunMetronomeEnabled(enabled) {
+  try {
+    localStorage.setItem(RUN_METRONOME_ENABLED_KEY, String(enabled));
+  } catch (error) {
+    // 保存領域を使えないときは、何もしない
+  }
+}
