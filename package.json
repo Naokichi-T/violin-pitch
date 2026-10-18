@@ -21,6 +21,7 @@
 		"#lib/*": "./src/lib/*"
 	},
 	"dependencies": {
-		"fflate": "^0.8.3"
+		"fflate": "^0.8.3",
+		"vexflow": "^5.0.0"
 	}
 }

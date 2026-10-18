@@ -1,5 +1,6 @@
 // 読み込んだ楽譜（MusicXML から読み込んだ、練習専用の楽譜）を扱うファイル（ステップA-1a）
 // （ステップA-1b：同じ名前を探す・名前に (2) を付ける・上書き・削除の関数を足した）
+// （ステップA-2：id で1つ探す・五線譜に描く形にする・灰色にする音符の表を作る関数を足した）
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -42,6 +43,9 @@ const MIN_NOTE_NUMBER = 55;
 
 // 判定できる一番高い音の音番号（シ6）
 const MAX_NOTE_NUMBER = 95;
+
+// 判定から外す音符の色（灰色）（ステップA-2）
+const EXCLUDED_COLOR = "#9e9e9e";
 
 // ===== 判定から外す理由 =====
 // 音符のどこを見て外すかと、知らせるときの名前
@@ -404,4 +408,82 @@ export function buildImportedScore(score, partIndex, keyId, name) {
     measures: score.measures,
     partMeasures: part.measures,
   };
+}
+
+/**
+ * 読み込んだ楽譜を、id で1つ探す関数（ステップA-2）
+ * 練習ページで、URL の id から楽譜を開くのに使う。
+ * @param {string} id - 探す楽譜の id
+ * @returns {object|null} 見つかった楽譜。見つからないときは null
+ */
+export function getImportedScore(id) {
+  const score = loadImportedScores().find((item) => item.id === id);
+
+  // find は、見つからないとき undefined を返すので、null に直して返す
+  return score === undefined ? null : score;
+}
+
+/**
+ * 読み込んだ楽譜を、五線譜に描くための形（楽譜作成アプリの楽譜データの形）に直す関数（ステップA-2）
+ * 選んだパートを、1つだけのパートとして入れる。
+ * タイトルと作曲者は空にする（練習ページでは、名前を五線譜の外に出すため。空にするとタイトルの場所を取らない）。
+ * @param {object} record - 読み込んだ楽譜
+ * @returns {object} 楽譜作成アプリの形の楽譜データ（パートは1つ）
+ */
+export function toRenderScore(record) {
+  return {
+    title: "",
+    composer: "",
+    tempo: record.tempo,
+    tempoText: record.tempoText ?? "",
+    measures: record.measures,
+    parts: [
+      {
+        id: "imported", // パートの名札（楽譜作成アプリの形に合わせて入れておく。この中では使わない）
+        name: record.partName,
+        abbreviation: record.partName,
+        instrument: record.instrument,
+        measures: record.partMeasures,
+      },
+    ],
+  };
+}
+
+/**
+ * 判定から外す音符を灰色にするための、音符ごとの色の表を作る関数（ステップA-2）
+ * 五線譜を描く関数（render.js の renderScore）の noteColors に渡す。
+ * タイでつながった後ろの音符も、前の音符が外す音なら灰色にする（1つの音として扱うので）。
+ * @param {object[]} partMeasures - 選んだパートの小節（読み込んだ楽譜の partMeasures）
+ * @returns {Map<string, string>} キーは "0-小節の番号-音符の番号"（パートはいつも 0）、値は色
+ */
+export function getExcludedNoteColors(partMeasures) {
+  const colors = new Map();
+
+  // 1つ前の音符・休符と、それが外す音だったか（小節をまたいでもよい。タイの続きを調べるのに使う）
+  let previous = null;
+  let previousExcluded = false;
+
+  partMeasures.forEach((measure, i) => {
+    measure.notes.forEach((note, j) => {
+      // 休符：色は付けない
+      if (note.rest) {
+        previous = note;
+        previousExcluded = false;
+        return;
+      }
+
+      // 前の音からタイでつながってきた音なら、前の音と同じ扱い。そうでなければ、この音で調べる
+      const isTiedFromPrevious = previous !== null && !previous.rest && previous.tie;
+      const excluded = isTiedFromPrevious ? previousExcluded : getExcludeReason(note) !== null;
+
+      if (excluded) {
+        colors.set("0-" + i + "-" + j, EXCLUDED_COLOR);
+      }
+
+      previous = note;
+      previousExcluded = excluded;
+    });
+  });
+
+  return colors;
 }

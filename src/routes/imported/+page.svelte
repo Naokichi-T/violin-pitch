@@ -3,6 +3,7 @@
   // ［MusicXMLを読み込む］でファイルを選ぶと、読み込むときの窓を出し、［読み込む］で保存して一覧に足す。
   // 読み込んだ楽譜は練習専用（編集ページでは直さない）。手で入力した楽譜（「保存した楽譜」のページ）とは別に並べる。
   // （ステップA-1b：同じ名前のときの上書き・別に追加、並び替え、削除、MusicXML を作れるアプリの紹介を足した）
+  // （ステップA-2：楽譜ごとに［練習］ボタンを足した。押すと練習ページ /imported/practice?id=○○ が開く）
 
   // onMount：このページが画面に表示された直後に処理をするための仕組み
   import { onMount } from "svelte";
@@ -332,8 +333,10 @@
             {/if}
           </div>
 
-          <!-- 削除のボタン（ステップA-1b。「練習」のボタンは、次のステップ A-2 で足す） -->
+          <!-- 練習・削除のボタンを縦に並べる（削除はステップA-1b、練習はステップA-2） -->
           <div class="score-buttons">
+            <!-- 練習ページへのリンク（ボタンのような見た目にする）。URL の id で、どの楽譜を開くかを伝える -->
+            <a class="practice-button" href={"/imported/practice?id=" + score.id}>練習</a>
             <button class="delete-button" onclick={() => removeScore(score)}>削除</button>
           </div>
         </li>
@@ -566,12 +569,24 @@
     min-width: 0;
   }
 
-  /* ボタンを縦に並べる（A-2 で「練習」ボタンを足す予定） */
+  /* 練習・削除のボタンを縦に並べる */
   .score-buttons {
     display: flex;
     flex-direction: column;
     gap: 4px;
     flex-shrink: 0;
+  }
+
+  /* 「練習」ボタン：青（リンクだが、ボタンのような見た目にする）（ステップA-2） */
+  .practice-button {
+    padding: 6px 14px;
+    font-size: 0.9rem;
+    color: white;
+    background-color: #1976d2;
+    border: 2px solid #1976d2;
+    border-radius: 8px;
+    text-align: center;
+    text-decoration: none;
   }
 
   /* 「削除」ボタン：白地に赤い枠（押し間違えると困るので、目立たせすぎない） */
