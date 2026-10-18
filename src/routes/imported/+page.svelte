@@ -2,6 +2,7 @@
   // 「読み込んだ楽譜」のページ（ステップA-1a）
   // ［MusicXMLを読み込む］でファイルを選ぶと、読み込むときの窓を出し、［読み込む］で保存して一覧に足す。
   // 読み込んだ楽譜は練習専用（編集ページでは直さない）。手で入力した楽譜（「保存した楽譜」のページ）とは別に並べる。
+  // （ステップA-1b：同じ名前のときの上書き・別に追加、並び替え、削除、MusicXML を作れるアプリの紹介を足した）
 
   // onMount：このページが画面に表示された直後に処理をするための仕組み
   import { onMount } from "svelte";
@@ -9,14 +10,34 @@
   // MusicXML のファイルを読む関数・楽譜データにする関数・ファイル名からタイトルを作る関数を読み込む（楽譜作成アプリからコピーしたもの）
   import { readMusicXMLFile, musicXMLToScore, titleFromFileName } from "#lib/musicxml/musicxmlImport.js";
 
-  // 読み込んだ楽譜の一覧を読み込む関数と、新しく足す関数を読み込む
-  import { loadImportedScores, addImportedScore } from "#lib/imported.js";
+  // 読み込んだ楽譜の一覧を読み込む関数・新しく足す関数・上書きする関数・削除する関数・名前に (2) を付ける関数を読み込む
+  import { loadImportedScores, addImportedScore, replaceImportedScore, deleteImportedScore, getUniqueName } from "#lib/imported.js";
 
   // 調のデータを探す関数と、調の名前を作る関数を読み込む
   import { getKey, getKeyLabel } from "#lib/key.js";
 
   // 読み込むときの窓の部品を読み込む
   import ImportDialog from "#lib/ImportDialog.svelte";
+
+  // ===== 並び順に関する設定値（ステップA-1b） =====
+
+  // 選べる並び順の一覧
+  //   id   ：並び順を区別するための名前
+  //   name ：画面に表示する名前
+  const SORTS = [
+    { id: "newest", name: "読み込んだ日の新しい順" },
+    { id: "oldest", name: "読み込んだ日の古い順" },
+    { id: "name", name: "名前順" },
+  ];
+
+  // ===== MusicXML を作れるアプリの紹介（ステップA-1b） =====
+  //   name ：アプリの名前
+  //   url  ：アプリのページのアドレス
+  //   text ：ひとことの説明
+  const MAKER_APPS = [
+    { name: "MuseScore", url: "https://musescore.org/ja", text: "無料の楽譜作成ソフト（パソコン用）" },
+    { name: "Flat", url: "https://flat.io/ja", text: "ブラウザやアプリで使える楽譜作成サービス" },
+  ];
 
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
@@ -43,11 +64,28 @@
   // bind:this を付けると、この変数に部品そのものが入る
   let fileInput = $state(null);
 
-  // 新しい順に並べた一覧（並び替えのメニューは、次のステップ A-1b で付ける）
-  // $derived.by を付けると、scores が変わるたびに、自動で並べ替え直される
+  // 選択中の並び順の id（最初は、読み込んだ日の新しい順）（ステップA-1b）
+  let sortId = $state("newest");
+
+  // 並び順に合わせて並べ替えた一覧（ステップA-1b：並び順を選べるようにした）
+  // $derived.by を付けると、scores か sortId が変わるたびに、自動で並べ替え直される
   let sortedScores = $derived.by(() => {
-    // 元の配列を変えないように、コピーしてから並べ替える（読み込んだ日時の大きいほうを前にする）
-    return [...scores].sort((a, b) => b.importedAt - a.importedAt);
+    // 元の配列を変えないように、コピーしてから並べ替える
+    const copy = [...scores];
+
+    if (sortId === "name") {
+      // 名前順：日本語の並び順で比べる
+      // numeric: true を付けると、名前の中の数字を「数」として比べる（「2」が「10」より前になる）
+      copy.sort((a, b) => a.name.localeCompare(b.name, "ja", { numeric: true }));
+    } else if (sortId === "oldest") {
+      // 古い順：読み込んだ日時（数字）の小さいほうを前にする
+      copy.sort((a, b) => a.importedAt - b.importedAt);
+    } else {
+      // 新しい順：読み込んだ日時（数字）の大きいほうを前にする
+      copy.sort((a, b) => b.importedAt - a.importedAt);
+    }
+
+    return copy;
   });
 
   // このページが画面に表示された直後に、読み込んだ楽譜の一覧をブラウザから読み込む
@@ -126,12 +164,21 @@
   }
 
   /**
-   * 窓で［読み込む］を押したときに呼ばれる関数
-   * 楽譜を保存して、一覧を読み込み直す。
-   * @param {object} record - 保存する楽譜の形（窓が作ったもの）
+   * 窓で読み込むことが決まったときに呼ばれる関数
+   * 楽譜を保存して（新しく足すか、上書きするか）、一覧を読み込み直す。
+   * （ステップA-1b：上書きと、同じ名前のときに (2) などを付けて足すのを入れた）
+   * @param {{record: object, action: string, targetId: string|null}} result - 窓から渡されたもの
+   *   record：保存する楽譜の形、action：'add'（新しく足す）か 'overwrite'（上書き）、targetId：上書きする楽譜の id
    */
-  function handleConfirm(record) {
-    const saved = addImportedScore(record);
+  function handleConfirm(result) {
+    let saved;
+    if (result.action === "overwrite") {
+      // 上書き：同じ名前の楽譜を入れ替える
+      saved = replaceImportedScore(result.targetId, result.record);
+    } else {
+      // 新しく足す：同じ名前があれば、名前のうしろに (2) などを付ける
+      saved = addImportedScore({ ...result.record, name: getUniqueName(result.record.name) });
+    }
 
     // 窓を閉じる
     pending = null;
@@ -144,7 +191,26 @@
 
     // 一覧を読み込み直して、終わったことを知らせる
     scores = loadImportedScores();
-    doneMessage = "「" + saved.name + "」を読み込みました。";
+    doneMessage = "「" + saved.name + "」を" + (result.action === "overwrite" ? "上書きしました。" : "読み込みました。");
+  }
+
+  /**
+   * 読み込んだ楽譜を削除する関数（ステップA-1b）
+   * 「削除」ボタンを押したときに呼ばれる。押し間違いを防ぐために、先に確認する。
+   * @param {object} score - 削除する楽譜
+   */
+  function removeScore(score) {
+    // 確認の画面を出す（「キャンセル」を押すと、何もせずに終わる）
+    if (!confirm("「" + score.name + "」を削除します。元に戻せません。よろしいですか？")) {
+      return;
+    }
+
+    // 一覧から削除して、画面の一覧を読み込み直す
+    deleteImportedScore(score.id);
+    scores = loadImportedScores();
+
+    // 前のメッセージ（「○○を読み込みました」など）は消す
+    doneMessage = "";
   }
 
   /**
@@ -184,6 +250,39 @@
   <!-- 説明：どんなファイルを読み込めるか -->
   <p class="hint">楽譜作成アプリなどで書き出した MusicXML（.musicxml・.xml・.mxl）を選んでください。</p>
 
+  <!-- MusicXML を作れるアプリの紹介（ステップA-1b） -->
+  <!-- まだ1つも読み込んでいないときは開いておき、読み込んだ楽譜があるときは閉じておく（一覧が下に追いやられないように） -->
+  <details class="makers" open={isLoaded && scores.length === 0}>
+    <summary>MusicXML の楽譜の作り方</summary>
+
+    <!-- 姉妹アプリ -->
+    <div class="maker sister">
+      <p class="maker-name">
+        <!-- target="_blank" で新しいタブに開く。rel="noopener" は、開いた先のページからこのページを操作されないようにするための決まり文句 -->
+        <a href="https://string-score.vercel.app/" target="_blank" rel="noopener">string-score</a>
+        <span class="sister-mark">姉妹アプリ</span>
+      </p>
+      <p class="maker-text">弦楽器の楽譜作成アプリ。ブラウザで楽譜を入力・再生でき、MusicXML で書き出せます（パソコン・タブレット向け）。</p>
+      <!-- 無料・アカウント登録不要であることを、目立つ札で出す（ステップA-1b） -->
+      <p class="maker-tags">
+        <span class="maker-tag">無料</span>
+        <span class="maker-tag">アカウント登録不要</span>
+      </p>
+    </div>
+
+    <!-- そのほかのアプリ -->
+    <p class="maker-lead">ほかの楽譜作成アプリで作った楽譜も読み込めます。たとえば：</p>
+    <ul class="maker-list">
+      {#each MAKER_APPS as app (app.name)}
+        <li>
+          <a href={app.url} target="_blank" rel="noopener">{app.name}</a>
+          <span class="maker-text">：{app.text}</span>
+        </li>
+      {/each}
+    </ul>
+    <p class="maker-note">MusicXML で書き出せるアプリなら、ほかのものでも使えます（書き出しのやり方や、使える機能は、アプリやプランによって違います）。</p>
+  </details>
+
   <!-- エラーメッセージ：エラーがあるときだけ表示する -->
   {#if errorMessage !== ""}
     <p class="error">{errorMessage}</p>
@@ -201,24 +300,42 @@
     <!-- 1つも読み込んでいないとき -->
     <p class="message">読み込んだ楽譜はまだありません。</p>
   {:else}
-    <!-- 件数 -->
-    <p class="count">{scores.length}件</p>
+    <!-- 件数と、並び順のメニューを横に並べる（ステップA-1b：並び順のメニューを足した） -->
+    <div class="sort-row">
+      <span class="count">{scores.length}件</span>
+
+      <!-- 並び順のメニュー。bind:value を付けると、選んだ並び順の id が sortId に自動で入る -->
+      <!-- aria-label は、読み上げで操作する人のための、メニューの説明 -->
+      <select class="sort-select" aria-label="並び順" bind:value={sortId}>
+        {#each SORTS as sort (sort.id)}
+          <option value={sort.id}>{sort.name}</option>
+        {/each}
+      </select>
+    </div>
 
     <!-- 楽譜の一覧 -->
     <ul class="score-list">
       <!-- 並べ替えた一覧から、楽譜を1つずつ取り出して表示する -->
       {#each sortedScores as score (score.id)}
         <li class="score-item">
-          <!-- 楽譜の名前 -->
-          <p class="score-name">{score.name}</p>
+          <!-- 楽譜の名前と説明 -->
+          <div class="score-text">
+            <!-- 楽譜の名前 -->
+            <p class="score-name">{score.name}</p>
 
-          <!-- 調・読み込んだ日時 -->
-          <p class="score-detail">{getKeyLabel(getKey(score.keyId))}・{formatDate(score.importedAt)}</p>
+            <!-- 調・読み込んだ日時 -->
+            <p class="score-detail">{getKeyLabel(getKey(score.keyId))}・{formatDate(score.importedAt)}</p>
 
-          <!-- 「通し」の最高点：記録があるときだけ表示する（記録するのは、あとのステップ） -->
-          {#if typeof score.bestScore === "number"}
-            <p class="score-detail best">最高点 {score.bestScore}点</p>
-          {/if}
+            <!-- 「通し」の最高点：記録があるときだけ表示する（記録するのは、あとのステップ） -->
+            {#if typeof score.bestScore === "number"}
+              <p class="score-detail best">最高点 {score.bestScore}点</p>
+            {/if}
+          </div>
+
+          <!-- 削除のボタン（ステップA-1b。「練習」のボタンは、次のステップ A-2 で足す） -->
+          <div class="score-buttons">
+            <button class="delete-button" onclick={() => removeScore(score)}>削除</button>
+          </div>
         </li>
       {/each}
     </ul>
@@ -309,11 +426,116 @@
     color: #616161;
   }
 
-  /* 件数 */
-  .count {
+  /* MusicXML の楽譜の作り方（開け閉めできる枠）（ステップA-1b） */
+  .makers {
+    margin: 12px 0 0 0;
+    padding: 8px 10px;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #424242;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+  }
+
+  /* 「MusicXML の楽譜の作り方」の文字：押せることが分かるように、カーソルを指の形にする */
+  .makers summary {
+    cursor: pointer;
+    color: #1976d2;
+  }
+
+  /* アプリの紹介1つぶん（姉妹アプリ）：うすい青の地にする */
+  .maker.sister {
+    margin: 8px 0 0 0;
+    padding: 6px 8px;
+    background-color: #e3f2fd;
+    border-radius: 6px;
+  }
+
+  /* アプリの名前の行 */
+  .maker-name {
+    margin: 0;
+    font-weight: bold;
+  }
+
+  /* 「姉妹アプリ」の印：小さな青い札 */
+  .sister-mark {
+    margin-left: 4px;
+    padding: 1px 6px;
+    font-size: 0.7rem;
+    font-weight: normal;
+    color: white;
+    background-color: #1976d2;
+    border-radius: 8px;
+  }
+
+  /* アプリの説明 */
+  .maker-text {
+    margin: 0;
+  }
+
+  /* 「無料」「アカウント登録不要」の札を横に並べる（ステップA-1b） */
+  .maker-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0 0 0;
+  }
+
+  /* 札1つぶん：白地に緑の枠と字 */
+  .maker-tag {
+    padding: 1px 8px;
+    font-size: 0.75rem;
+    color: #2e7d32;
+    background-color: white;
+    border: 1px solid #2e7d32;
+    border-radius: 8px;
+  }
+
+  /* 「ほかの楽譜作成アプリで…」の文 */
+  .maker-lead {
+    margin: 8px 0 0 0;
+  }
+
+  /* ほかのアプリの一覧：左の字下げを小さめにする */
+  .maker-list {
+    margin: 2px 0 0 0;
+    padding-left: 1.4em;
+  }
+
+  /* 紹介の中のリンク */
+  .makers a {
+    color: #1976d2;
+  }
+
+  /* 「MusicXML で書き出せるアプリなら…」の注意：小さくグレーで表示する */
+  .maker-note {
+    margin: 6px 0 0 0;
+    font-size: 0.75rem;
+    color: #757575;
+  }
+
+  /* 件数と、並び順のメニューを横に並べる（ステップA-1b） */
+  .sort-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin: 20px 0 0 0;
+  }
+
+  /* 件数：残りの横幅を使って、メニューを右に寄せる */
+  .count {
+    flex: 1;
     font-size: 0.85rem;
     color: #616161;
+  }
+
+  /* 並び順のメニュー：指で押しやすい大きさにする */
+  .sort-select {
+    padding: 8px 4px;
+    font-size: 0.95rem;
+    border: 1px solid #bdbdbd;
+    border-radius: 8px;
+    background-color: white;
   }
 
   /* 楽譜の一覧：縦に並べる */
@@ -327,11 +549,40 @@
     list-style: none;
   }
 
-  /* 楽譜1つぶん：枠で囲む */
+  /* 楽譜1つぶん：名前などの文字と、ボタンを横に並べる（ステップA-1b：ボタンを足したので横並びにした） */
   .score-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 8px 10px;
     border: 1px solid #bdbdbd;
     border-radius: 8px;
+  }
+
+  /* 名前などの文字：残りの横幅を使う */
+  .score-text {
+    flex: 1;
+    /* min-width: 0 を付けると、名前が長くても、ボタンを押し出さずに折り返す */
+    min-width: 0;
+  }
+
+  /* ボタンを縦に並べる（A-2 で「練習」ボタンを足す予定） */
+  .score-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  /* 「削除」ボタン：白地に赤い枠（押し間違えると困るので、目立たせすぎない） */
+  .delete-button {
+    padding: 6px 14px;
+    font-size: 0.9rem;
+    color: #c62828;
+    background-color: white;
+    border: 1px solid #c62828;
+    border-radius: 8px;
+    cursor: pointer;
   }
 
   /* 楽譜の名前：太字。長いときは折り返す */

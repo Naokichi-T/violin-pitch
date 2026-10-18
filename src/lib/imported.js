@@ -1,4 +1,5 @@
 // 読み込んだ楽譜（MusicXML から読み込んだ、練習専用の楽譜）を扱うファイル（ステップA-1a）
+// （ステップA-1b：同じ名前を探す・名前に (2) を付ける・上書き・削除の関数を足した）
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -138,6 +139,116 @@ export function addImportedScore(record) {
   }
 
   return score;
+}
+
+/**
+ * 同じ名前の、読み込んだ楽譜を探す関数（ステップA-1b）
+ * 読み込むときに「上書きか、別に追加か」を聞くために使う。
+ * @param {string} name - 探す名前
+ * @returns {object|null} 見つかった楽譜（同じ名前が2つ以上あるときは、いちばん新しく読み込んだもの）。なければ null
+ */
+export function findImportedScoreByName(name) {
+  // 同じ名前の楽譜を全部取り出して、読み込んだ日時の新しい順に並べる
+  const sameName = loadImportedScores()
+    .filter((score) => score.name === name)
+    .sort((a, b) => b.importedAt - a.importedAt);
+
+  // 1つもなければ null、あれば先頭（いちばん新しいもの）
+  return sameName.length === 0 ? null : sameName[0];
+}
+
+/**
+ * 同じ名前の楽譜があるとき、名前のうしろに「 (2)」「 (3)」…を付けて、まだ使っていない名前にする関数（ステップA-1b）
+ * ［別に追加］を選んだときに使う。
+ * @param {string} name - もとの名前（例：'カノン（Violin I）'）
+ * @returns {string} まだ使っていない名前（例：'カノン（Violin I） (2)'）。同じ名前がなければ、もとの名前のまま
+ */
+export function getUniqueName(name) {
+  // 今ある楽譜の名前を全部集める（Set は、同じものを1つにまとめて持てる入れ物。has で「入っているか」を調べられる）
+  const usedNames = new Set(loadImportedScores().map((score) => score.name));
+
+  // 同じ名前がなければ、そのまま使う
+  if (!usedNames.has(name)) {
+    return name;
+  }
+
+  // (2) から順に、まだ使っていない番号を探す
+  let number = 2;
+  while (usedNames.has(name + " (" + number + ")")) {
+    number += 1;
+  }
+  return name + " (" + number + ")";
+}
+
+/**
+ * 楽譜の中身（調・小節の情報・音符）を、比べるための文字にする関数（このファイルの中だけで使う）（ステップA-1b）
+ * 上書きするときに、楽譜が変わったかどうか（最高点を消すかどうか）を決めるのに使う。
+ * テンポ・音律・名前は比べない（変わっても、前の点数と比べられるので）。
+ * @param {object} score - 読み込んだ楽譜
+ * @returns {string} 比べるための文字
+ */
+function toComparableText(score) {
+  return JSON.stringify({
+    keyId: score.keyId,
+    measures: score.measures,
+    partMeasures: score.partMeasures,
+  });
+}
+
+/**
+ * 読み込んだ楽譜を、新しく読み込んだ内容で上書きする関数（ステップA-1b）
+ * id はそのまま、中身と読み込んだ日時を入れ替える。
+ * 楽譜の中身（調・小節・音符）が変わったときは、最高点を消す（前の点数とは比べられないため）。
+ * @param {string} id - 上書きする楽譜の id
+ * @param {object} record - 新しく読み込んだ楽譜の形（buildImportedScore で作ったもの）
+ * @returns {object|null} 上書きした後の楽譜。その id の楽譜がないときや、保存できなかったときは null
+ */
+export function replaceImportedScore(id, record) {
+  // 今の一覧を読み込んで、上書きする楽譜の場所を探す（findIndex は、見つからないとき -1 を返す）
+  const scores = loadImportedScores();
+  const index = scores.findIndex((score) => score.id === id);
+  if (index === -1) {
+    return null;
+  }
+
+  const old = scores[index];
+
+  // 新しい楽譜を作る（id は前のまま、読み込んだ日時は今）
+  const score = { ...record, id: old.id, importedAt: Date.now() };
+
+  // 楽譜の中身が同じで、前に最高点があれば、最高点を引き継ぐ
+  if (toComparableText(old) === toComparableText(record) && typeof old.bestScore === "number") {
+    score.bestScore = old.bestScore;
+  }
+
+  // 一覧の同じ場所に入れ替えて、書き込む
+  scores[index] = score;
+  if (!writeImportedScores(scores)) {
+    return null;
+  }
+
+  return score;
+}
+
+/**
+ * 読み込んだ楽譜を、一覧から削除する関数（ステップA-1b）
+ * @param {string} id - 削除する楽譜の id
+ * @returns {boolean} 削除できたら true。その id の楽譜がないときや、書き込めなかったときは false
+ */
+export function deleteImportedScore(id) {
+  // 今の一覧を読み込む
+  const scores = loadImportedScores();
+
+  // 削除する楽譜を除いた、新しい一覧を作る
+  const remaining = scores.filter((score) => score.id !== id);
+
+  // 数が変わっていないときは、その id の楽譜がなかった
+  if (remaining.length === scores.length) {
+    return false;
+  }
+
+  // 書き込む
+  return writeImportedScores(remaining);
 }
 
 /**

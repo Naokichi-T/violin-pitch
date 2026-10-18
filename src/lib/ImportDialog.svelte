@@ -2,6 +2,7 @@
   // MusicXML を読み込むときに出す窓の部品（ステップA-1a）
   // 名前・パート・長調か短調かを選んでもらい、知らせること（重音・判定から外す音など）を表示する。
   // ［読み込む］を押すと、保存する楽譜の形を作って、使う側（読み込んだ楽譜の一覧ページ）に渡す。
+  // （ステップA-1b：同じ名前の楽譜がもうあるときは、窓の中で「上書き」か「別に追加」かを聞く）
 
   // untrack：値を「最初の1回だけ」読むための仕組み（下の name などで使う）
   import { untrack } from "svelte";
@@ -10,12 +11,16 @@
   import { getKeyLabel } from "#lib/key.js";
 
   // パートの一覧・調の候補・最初の名前・知らせることを作る関数と、保存する形を作る関数を読み込む
-  import { getPartChoices, getKeyChoices, getDefaultName, analyzePart, buildImportedScore } from "#lib/imported.js";
+  // （ステップA-1b：同じ名前の楽譜を探す関数も読み込む）
+  import { getPartChoices, getKeyChoices, getDefaultName, analyzePart, buildImportedScore, findImportedScoreByName } from "#lib/imported.js";
 
   // この部品を使う側から受け取る値
   // score    ：楽譜作成アプリの形の楽譜データ（musicXMLToScore で読み込んだもの）
   // warnings ：読み込みのときに分かった、知らせることの文の配列（musicXMLToScore が返したもの）
-  // onconfirm：［読み込む］を押したときに呼ぶ関数。保存する楽譜の形を渡す
+  // onconfirm：読み込むことが決まったときに呼ぶ関数。{ record, action, targetId } を渡す（ステップA-1b）
+  //            record  ：保存する楽譜の形
+  //            action  ：'add'（新しく足す）か 'overwrite'（同じ名前の楽譜に上書きする）
+  //            targetId：上書きする楽譜の id（'add' のときは null）
   // oncancel ：［やめる］を押したときに呼ぶ関数
   let { score, warnings, onconfirm, oncancel } = $props();
 
@@ -52,6 +57,10 @@
   // trim() は、前後の空白を取りのぞく命令
   let canConfirm = $derived(name.trim() !== "" && analysis.judgeableCount > 0);
 
+  // 同じ名前の楽譜（［読み込む］を押したときに見つかったもの）。確認を出していないときは null（ステップA-1b）
+  // これが入っている間は、窓の下のボタンが［やめる］［別に追加］［上書き］に変わる
+  let sameNameScore = $state(null);
+
   /**
    * パートを選び直したときに呼ばれる関数
    * 名前を自分で書き換えていなければ、名前も「タイトル（そのパート名）」に変える。
@@ -72,10 +81,42 @@
 
   /**
    * ［読み込む］を押したときに呼ばれる関数
-   * 保存する楽譜の形を作って、使う側に渡す。
+   * 同じ名前の楽譜がなければ、そのまま「新しく足す」として使う側に渡す。
+   * あれば、確認を出す（ボタンが［やめる］［別に追加］［上書き］に変わる）。（ステップA-1b）
    */
   function confirmImport() {
-    onconfirm(buildImportedScore(score, partIndex, keyId, name.trim()));
+    const found = findImportedScoreByName(name.trim());
+    if (found === null) {
+      // 同じ名前がない：そのまま新しく足す
+      onconfirm({ record: buildImportedScore(score, partIndex, keyId, name.trim()), action: "add", targetId: null });
+    } else {
+      // 同じ名前がある：確認を出す
+      sameNameScore = found;
+    }
+  }
+
+  /**
+   * 確認で［上書き］を押したときに呼ばれる関数（ステップA-1b）
+   * 同じ名前の楽譜に上書きするように、使う側に渡す。
+   */
+  function overwrite() {
+    onconfirm({ record: buildImportedScore(score, partIndex, keyId, name.trim()), action: "overwrite", targetId: sameNameScore.id });
+  }
+
+  /**
+   * 確認で［別に追加］を押したときに呼ばれる関数（ステップA-1b）
+   * 新しく足すように、使う側に渡す（名前のうしろに (2) などを付けるのは、使う側で行う）。
+   */
+  function addSeparately() {
+    onconfirm({ record: buildImportedScore(score, partIndex, keyId, name.trim()), action: "add", targetId: null });
+  }
+
+  /**
+   * 確認で［やめる］を押したときに呼ばれる関数（ステップA-1b）
+   * 確認を閉じて、窓に戻る（名前を直してから、もう一度［読み込む］を押せる）。
+   */
+  function backToForm() {
+    sameNameScore = null;
   }
 </script>
 
@@ -90,14 +131,15 @@
     <label class="field">
       <span class="field-label">名前</span>
       <!-- bind:value を付けると、入力した文字が name に自動で入る -->
-      <input class="text-input" type="text" bind:value={name} oninput={handleNameInput} />
+      <!-- 同じ名前の確認を出している間は、書き換えられないようにする（ステップA-1b） -->
+      <input class="text-input" type="text" bind:value={name} oninput={handleNameInput} disabled={sameNameScore !== null} />
     </label>
 
     <!-- パート：パートが2つ以上あるときだけ選ばせる -->
     {#if partChoices.length > 1}
       <label class="field">
         <span class="field-label">練習するパート</span>
-        <select class="select" bind:value={partIndex} onchange={handlePartChange}>
+        <select class="select" bind:value={partIndex} onchange={handlePartChange} disabled={sameNameScore !== null}>
           {#each partChoices as choice (choice.index)}
             <option value={choice.index}>{choice.name}</option>
           {/each}
@@ -118,7 +160,7 @@
         {#each keyChoices as key (key.id)}
           <!-- bind:group を付けると、選んだほうの value（調の id）が keyId に自動で入る -->
           <label class="key-choice">
-            <input type="radio" name="import-key" value={key.id} bind:group={keyId} />
+            <input type="radio" name="import-key" value={key.id} bind:group={keyId} disabled={sameNameScore !== null} />
             {getKeyLabel(key)}
           </label>
         {/each}
@@ -139,11 +181,28 @@
       <p class="error">このパートには、判定できる音がありません。ほかのパートを選んでください。</p>
     {/if}
 
-    <!-- やめる・読み込むのボタン -->
-    <div class="button-row">
-      <button class="cancel-button" onclick={oncancel}>やめる</button>
-      <button class="confirm-button" disabled={!canConfirm} onclick={confirmImport}>読み込む</button>
-    </div>
+    {#if sameNameScore === null}
+      <!-- やめる・読み込むのボタン -->
+      <div class="button-row">
+        <button class="cancel-button" onclick={oncancel}>やめる</button>
+        <button class="confirm-button" disabled={!canConfirm} onclick={confirmImport}>読み込む</button>
+      </div>
+    {:else}
+      <!-- 同じ名前の楽譜があるときの確認（ステップA-1b） -->
+      <div class="same-name">
+        <p class="same-name-text">「{sameNameScore.name}」はもう読み込んであります。</p>
+        <p class="same-name-note">
+          ［上書き］：前の楽譜を入れ替えます（楽譜の中身が変わっていたら、最高点は消えます）<br />
+          ［別に追加］：名前のうしろに (2) などを付けて、もう1つ保存します<br />
+          ［やめる］：名前を直して、もう一度［読み込む］を押せます
+        </p>
+      </div>
+      <div class="button-row">
+        <button class="cancel-button" onclick={backToForm}>やめる</button>
+        <button class="cancel-button" onclick={addSeparately}>別に追加</button>
+        <button class="confirm-button" onclick={overwrite}>上書き</button>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -234,6 +293,30 @@
     margin: 0 0 12px 0;
     font-size: 0.85rem;
     color: #c62828;
+  }
+
+  /* 同じ名前の楽譜があるときの確認：うすい青の地に表示する（ステップA-1b） */
+  .same-name {
+    margin: 0 0 12px 0;
+    padding: 8px 10px;
+    background-color: #e3f2fd;
+    border-radius: 8px;
+  }
+
+  /* 確認の文 */
+  .same-name-text {
+    margin: 0 0 4px 0;
+    font-size: 0.95rem;
+    font-weight: bold;
+    overflow-wrap: anywhere;
+  }
+
+  /* 確認のボタンの説明：小さく表示する */
+  .same-name-note {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: #424242;
   }
 
   /* やめる・読み込むのボタンを右寄せで横に並べる */
