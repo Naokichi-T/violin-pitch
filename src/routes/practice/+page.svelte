@@ -110,7 +110,7 @@
   let currentTemperament = $derived(getTemperament(temperamentId));
 
   // 「OK」とする範囲（セント）。目標の音とのズレがこの範囲に入っていれば OK
-  // 選択中のレベルによって変わる（ノーマルは 10、イージーは 25）
+  // 選択中のレベルによって変わる（ノーマルは 10、イージーは 20）
   let tolerance = $derived(getLevel(levelId).tolerance);
 
   // 開放弦の設定を、画面に表示するかどうか（純正律のときだけ表示する）

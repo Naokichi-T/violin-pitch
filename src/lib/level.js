@@ -8,7 +8,7 @@
 // OK の範囲を変えたいときは、ここの tolerance の数字を書き換える
 export const LEVELS = [
   { id: "normal", name: "ノーマル", tolerance: 10 },
-  { id: "easy", name: "イージー", tolerance: 25 },
+  { id: "easy", name: "イージー", tolerance: 20 }, // 2026/10/18：25 から 20 に変えた
 ];
 
 // 最初に選ばれているレベルの id（ノーマル）
