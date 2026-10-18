@@ -857,7 +857,11 @@
     // 出だしの時刻を見つける
     const previous = index > 0 ? runTimeline.items[index - 1] : null;
     const targetFrequency = getFrequency(item.note, currentKey, temperamentId);
-    const onset = findOnset(frames, item, previous, targetFrequency, playedClickTimes);
+    // ひとつ前の音の、見つかった出だしの時刻（見つかっていない・判定しない音なら null）（ステップD-5）
+    // 音程が外れた音の出だしを探すとき、ひとつ前の音の弾き始めと間違えないようにするために渡す
+    const previousResult = index > 0 ? rhythmResults[index - 1] : undefined;
+    const previousOnset = previousResult !== undefined && typeof previousResult.seconds === "number" ? previous.start + previousResult.seconds : null;
+    const onset = findOnset(frames, item, previous, targetFrequency, playedClickTimes, previousOnset);
     if (onset === null) {
       rhythmResults[index] = { status: "missing", seconds: null };
       return;

@@ -9,6 +9,11 @@
 //
 // 【見つけ方】
 // ・前の音と高さが違うとき・前が休符のとき：「目標の高さになった最初の時刻」（2回続けて目標の高さなら、その1回目）
+//   （ステップD-5：目標の高さにならなかったとき（音程が大きく外れたとき）は、
+//     「高さが前の音から変わった時刻」か「無音のあとに鳴り始めた時刻」、それもなければ「音量が下がってまた上がった時刻」にする。
+//     音程が外れていても、リズムは判定できるようにするため。
+//     そのときは、ひとつ前の音の出だし（もう見つかっているもの）より少し後だけを探す。
+//     短い音で大きく遅れたとき、ひとつ前の音の弾き始めを、今の音の出だしと間違えないようにするため）
 //   ただし、その少し前（0.15秒以内）に「音量が下がってまた上がった」所があれば、そちらを出だしにする
 //   （高さは、前の音と新しい音が混ざっている間は目標の高さにならず、音量よりおそく変わるため。弓を返したときなど）
 // ・前の音と同じ高さで、つながっているとき：「音量がいったん下がって、また上がった時刻」（弓を返して弾き直したところ）
@@ -34,6 +39,24 @@ const SEARCH_AFTER_RATIO = 0.7;
 // 「目標の高さ」とみなす範囲（セント）。音程が少しずれていても、出だしは見つけたいので、広めにする
 const PITCH_MATCH_CENTS = 70;
 
+// 「高さが変わった」とみなす、前の音の高さとの差（セント）（ステップD-5）
+// ビブラート（±20〜30セントくらい）を、高さが変わったと間違えないように、それより大きくする
+const PITCH_CHANGE_CENTS = 60;
+
+// 「音が鳴っている」とみなす、いちばん小さい音量（ステップD-5）
+// マイクで高さを調べるときに「音が出ていない」とする音量（pitch.js の MIN_RMS）と同じ値。
+// 高さの変わり目・音量で出だしを探すときに、無音の中の小さな雑音（メトロノームの鳴り終わりなど）を、
+// 出だしと間違えないようにするため
+const MIN_SOUND_RMS = 0.004;
+
+// ひとつ前の音の出だしから、何秒あとから「高さの変わり目」を探すか（ステップD-5）
+// ひとつ前の音の弾き始め（高さが混ざっている所）を、今の音の出だしと間違えないようにするため
+const PREVIOUS_ONSET_GAP = 0.08;
+
+// 「高さが落ち着いている」とみなす、続けて調べた2回の高さの差（セント）（ステップD-5）
+// 音の変わり目の、高さが混ざっている途中の値を拾わないようにするため
+const PITCH_STABLE_CENTS = 30;
+
 // 「目標の高さになった時刻」から、さかのぼって音量の上がり目を探す長さ（秒）
 const LOOK_BACK = 0.15;
 
@@ -53,7 +76,9 @@ const CLICK_IGNORE = 0.05;
 // メトロノームのクリックの直後、クリックの高さを拾っていないか調べる時間（秒）（ステップD-2）
 // クリックは 0.05秒鳴り、高さは 0.085秒ぶんの波から調べるので、鳴り終わっても少しの間はクリックの高さが出る。
 // それに、スピーカーから音が出るまでの遅れを足して、長めにしてある
-const CLICK_PITCH_WINDOW = 0.2;
+// （ステップD-5：0.2 から 0.3 にした。テストで、クリックの0.09〜0.2秒後までクリックの高さが残っていて、ぎりぎりだったため。
+//   クリックの高さに近い音（シ5・ファ♯6 くらい）だけをよけるので、長くしても、ほかの音の判定には影響しない）
+const CLICK_PITCH_WINDOW = 0.3;
 
 // クリックの高さ（Hz）（audio.js の CLICK_FREQUENCY・ACCENT_CLICK_FREQUENCY と同じ値）（ステップD-2）
 const CLICK_FREQUENCIES = [1000, 1500];
@@ -78,9 +103,10 @@ function centsBetween(a, b) {
  * @param {object|null} previous - 時刻表の1つ前の音（最初の音なら null）。探す範囲を決めるのに使う
  * @param {number} targetFrequency - 目標の高さ（Hz）
  * @param {number[]} clickTimes - メトロノームのクリックを鳴らした時刻（秒）の並び（鳴らしていなければ空）
+ * @param {number|null} previousOnset - ひとつ前の音の、見つかった出だしの時刻（秒）。分からないときは null（ステップD-5）
  * @returns {number|null} 出だしの時刻（秒。時刻表と同じ数え方）。見つからないときは null
  */
-export function findOnset(frames, item, previous, targetFrequency, clickTimes) {
+export function findOnset(frames, item, previous, targetFrequency, clickTimes, previousOnset = null) {
   // 探す範囲
   const before = previous !== null ? Math.min(SEARCH_BEFORE, (previous.end - previous.start) * 0.5) : SEARCH_BEFORE;
   const after = Math.min(SEARCH_AFTER, (item.end - item.start) * SEARCH_AFTER_RATIO);
@@ -105,7 +131,32 @@ export function findOnset(frames, item, previous, targetFrequency, clickTimes) {
   if (item.method === "volume") {
     return findVolumeOnset(inRange, clickTimes);
   }
-  return findPitchOnset(inRange, targetFrequency);
+
+  // 高さの変わり目を探すときに使う記録（ステップD-5）
+  // ひとつ前の音の出だしが分かっているときは、それより少し後の記録だけを使う
+  const changeRecords = previousOnset !== null ? inRange.filter((record) => record.time > previousOnset + PREVIOUS_ONSET_GAP) : inRange;
+
+  // 目標の高さになった時刻を探す
+  const onset = findPitchOnset(inRange, targetFrequency);
+  if (onset !== null && onset !== inRange[0].time) {
+    return onset;
+  }
+
+  // 範囲のはじめから、もう目標の高さだったとき（ステップD-5）
+  // とても早く弾き始めたのかもしれないが、前の音が外れていて、たまたま今の音の高さに近かっただけかもしれない。
+  // そこで、そのあとに高さが変わった所（または無音のあとの鳴り始め）があれば、そちらを出だしにする。
+  // なければ、とても早く弾き始めた（範囲の最初の時刻）とする
+  if (onset !== null) {
+    return findPitchChangeOnset(changeRecords) ?? onset;
+  }
+
+  // 見つからないとき（音程が大きく外れたとき）は、高さが変わった時刻を探し、それもなければ音量で探す（ステップD-5）
+  const changed = findPitchChangeOnset(changeRecords);
+  if (changed !== null) {
+    return changed;
+  }
+  // 音量で探すときも、ひとつ前の音の出だしより少し後だけを探す
+  return changeRecords.length >= 3 ? findVolumeOnset(changeRecords, clickTimes) : null;
 }
 
 /**
@@ -147,18 +198,75 @@ function findPitchOnset(records, targetFrequency) {
       }
 
       // 目標の高さになった時刻の少し前に、音量の上がり目があれば、そちらを出だしにする
-      const matchTime = records[k].time;
-      const nearby = records.filter((record) => record.time >= matchTime - LOOK_BACK && record.time <= matchTime);
-      const rise = nearby.length >= 3 ? findVolumeOnset(nearby, []) : null;
-      if (rise !== null && rise <= matchTime) {
-        return rise;
-      }
-
-      // 上がり目がない（スラーで高さだけが変わったなど）：高さが混ざっていたぶん、少し早めにする
-      return matchTime - PITCH_EXTRA_LATENCY;
+      // 上がり目がない（スラーで高さだけが変わったなど）ときは、高さが混ざっていたぶん、少し早めにする
+      // （ステップD-5：この2つは、高さが変わった時刻を探すときにも使うので、refineOnset に取り出した）
+      return refineOnset(records, records[k].time);
     }
   }
   return null;
+}
+
+/**
+ * 「高さが前の音から変わった時刻」を見つける関数（このファイルの中だけで使う）（ステップD-5）
+ * 目標の高さにならなかった（音程が大きく外れた）ときに使う。
+ * ・範囲のはじめに鳴っている高さを「前の音の高さ」として覚え、そこから PITCH_CHANGE_CENTS 以上ちがう高さが
+ *   2回続いた（しかも2回の差が PITCH_STABLE_CENTS 以内で落ち着いている）ら、その1回目を出だしにする
+ * ・無音（高さが null）のあとに、落ち着いた高さが2回続いたら、その1回目を出だしにする（休符のあとや、弓を離したあと）
+ * 出だしの時刻は、findPitchOnset と同じように、少し前に音量の上がり目があればそちら、なければ少し早めにする。
+ * @param {{time: number, frequency: number|null, rms: number}[]} records - 範囲の中の記録
+ * @returns {number|null} 出だしの時刻（秒）
+ */
+function findPitchChangeOnset(records) {
+  // 前の音の高さ（まだ分からないときは null）と、その後に無音があったかどうか
+  let reference = null;
+  let silenceSeen = false;
+
+  for (let k = 0; k + 1 < records.length; k++) {
+    const a = records[k].frequency;
+    const b = records[k + 1].frequency;
+
+    // 無音（高さが分からない回）：無音があったことを覚えておく
+    if (a === null) {
+      silenceSeen = true;
+      continue;
+    }
+
+    // 2回続けて高さがあり、落ち着いていて、音が鳴っている大きさか（小さな雑音の高さは使わない）
+    const loud = records[k].rms >= MIN_SOUND_RMS && records[k + 1].rms >= MIN_SOUND_RMS;
+    const stable = b !== null && loud && centsBetween(a, b) <= PITCH_STABLE_CENTS;
+    if (!stable) {
+      continue;
+    }
+
+    // 範囲のはじめから鳴っている音（無音をはさまない最初の高さ）は、前の音として覚える
+    if (reference === null && !silenceSeen) {
+      reference = a;
+      continue;
+    }
+
+    // 無音のあとに鳴り始めた・前の音から高さが変わった：ここを出だしにする
+    if (silenceSeen || centsBetween(a, reference) >= PITCH_CHANGE_CENTS) {
+      return refineOnset(records, records[k].time);
+    }
+  }
+  return null;
+}
+
+/**
+ * 高さで見つけた出だしの時刻を、音量の上がり目で少し前に直す関数（このファイルの中だけで使う）（ステップD-5）
+ * findPitchOnset でしていたことを取り出したもの。
+ * 少し前（LOOK_BACK 秒以内）に音量の上がり目があればそちら、なければ PITCH_EXTRA_LATENCY だけ早めにする。
+ * @param {{time: number, rms: number}[]} records - 範囲の中の記録
+ * @param {number} matchTime - 高さで見つけた時刻（秒）
+ * @returns {number} 出だしの時刻（秒）
+ */
+function refineOnset(records, matchTime) {
+  const nearby = records.filter((record) => record.time >= matchTime - LOOK_BACK && record.time <= matchTime);
+  const rise = nearby.length >= 3 ? findVolumeOnset(nearby, []) : null;
+  if (rise !== null && rise <= matchTime) {
+    return rise;
+  }
+  return matchTime - PITCH_EXTRA_LATENCY;
 }
 
 /**
@@ -195,7 +303,9 @@ function findVolumeOnset(records, clickTimes) {
   }
 
   // 下がった所から、そのあとのいちばん大きい音量の半分まで戻った最初の時刻
-  const threshold = usable[lowest].rms + (afterPeak - usable[lowest].rms) * RISE_RATIO;
+  // （ステップD-5：戻った音量が「音が鳴っている」大きさ（MIN_SOUND_RMS 以上）のときだけにした。
+  //   無音の中の小さな雑音（メトロノームの鳴り終わりなど）を、出だしと間違えないようにするため）
+  const threshold = Math.max(usable[lowest].rms + (afterPeak - usable[lowest].rms) * RISE_RATIO, MIN_SOUND_RMS);
   const rise = afterRecords.find((record) => record.rms >= threshold && record.rms > usable[lowest].rms);
   return rise !== undefined ? rise.time : null;
 }
