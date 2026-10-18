@@ -9,6 +9,7 @@
   //   そのため、描き直し・自動スクロール・重ねる層を、それぞれ別の $effect に分けた）
   // （ステップC-2：流れる縦線（cursorKeys・cursorTime）を足した。縦線は、もう1枚の重ねる層に描き、時刻が変わるたびに位置だけを動かす）
   // （ステップD：印を、音符の上にも出せるようにした（overlayMarks の placement: "above"）。リズムの結果に使う）
+  // （ステップD-4：印を少し大きく・太くした。「通し」で、ずれた音の印だけを出すようになったので、目立つように）
   // （ステップD-3：描く小節の範囲（measureRange）を足した。練習する区間の小節だけを描くため。
   //   小節の番号は、範囲を決めても元の楽譜の番号のままなので、色・帯・印・タップの場所は、今までと同じ番号で使える）
 
@@ -79,8 +80,10 @@
   const STAFF_HEIGHT = 40;
 
   // 音符の下の印の見た目（ステップC-1）
-  const MARK_FONT_SIZE = 14; // 印の文字の大きさ（ピクセル）
-  const MARK_GAP = 14; // 五線（または、五線より下に出た音符）の下端から、印の文字の下端までの間（ピクセル）
+  // （ステップD-4：大きさを 14 から 18 に、下の印の間を 14 から 18 にした。太さの縁取り（MARK_STROKE_WIDTH）を足した）
+  const MARK_FONT_SIZE = 18; // 印の文字の大きさ（ピクセル）
+  const MARK_STROKE_WIDTH = 0.8; // 印の文字の縁取りの太さ（ピクセル）。文字と同じ色で縁取って、線を太く見せる
+  const MARK_GAP = 18; // 五線（または、五線より下に出た音符）の下端から、印の文字の下端までの間（ピクセル）
   const MARK_GAP_ABOVE = 6; // 五線（または、五線より上に出た音符）の上端から、上に出す印の文字の下端までの間（ピクセル）（ステップD）
 
   // SVG の部品を作るときに使う決まった名前（createElementNS に渡す）
@@ -397,6 +400,9 @@
       text.setAttribute("text-anchor", "middle"); // x を文字のまん中にする
       text.setAttribute("font-size", String(MARK_FONT_SIZE));
       text.setAttribute("font-weight", "bold");
+      // 文字と同じ色で縁取って、線を太く見せる（ステップD-4）
+      text.setAttribute("stroke", mark.color);
+      text.setAttribute("stroke-width", String(MARK_STROKE_WIDTH));
       text.setAttribute("fill", mark.color);
       text.textContent = mark.text;
       overlay.appendChild(text);

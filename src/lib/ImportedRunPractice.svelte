@@ -25,6 +25,8 @@
   // その音の出だしの時刻を見つけて（rhythm.js）、お手本の始まりとのずれを出す。
   // ずれが判定のレベルの幅（ノーマル ±0.1秒・イージー ±0.15秒）以内なら OK、それより早い・遅いは「早い」「遅い」。
   // 結果は、音符の上に印（OK ●・早い ←・遅い →・見つからない ?）で出し、点数は音程とリズムを並べて出す。
+  // （ステップD-4：合っていた音（OK）は、印を出さず、音符も黒のままにした。ずれた音が目立つようにするため。
+  //   合っていた音も、タップすれば結果が見られる）
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -311,14 +313,19 @@
   let skipCount = $derived(timeline.items.filter((item) => !item.judge).length);
 
   // 五線譜の音符の色（演奏中は変えない。描き直しを避けるため）
-  //   ・終わったあと：判定の結果の色（OK 緑・高い 赤・低い 青・音なし 灰色・判定しない 灰色）
+  //   ・終わったあと：判定の結果の色（高い 赤・低い 青・音なし 灰色・判定しない 灰色）
+  //     （ステップD-4：OK の音は色を付けない（黒のまま）。ずれた音が目立つようにするため）
   //   ・それ以外：灰色の音（判定から外す音）＋ 今のテンポで短すぎる音
   let staffColors = $derived.by(() => {
     const colors = new Map(baseColors);
     timeline.items.forEach((item, index) => {
       let color = null;
       if (phase === "finished" && results[index] !== undefined) {
-        color = results[index].status === "skip" ? SKIP_COLOR : STATUS_STYLES[results[index].status].color;
+        if (results[index].status === "skip") {
+          color = SKIP_COLOR;
+        } else if (results[index].status !== "ok") {
+          color = STATUS_STYLES[results[index].status].color;
+        }
       } else if (!item.judge) {
         color = SKIP_COLOR;
       }
@@ -340,19 +347,21 @@
     return [];
   });
 
-  // 重ねる層の印：判定した音の下に、結果の印（●・↑・↓・−）を出す（判定しない短い音には出さない）
+  // 重ねる層の印：判定した音の下に、結果の印（↑・↓・−）を出す（判定しない短い音には出さない）
+  // （ステップD-4：OK の音には印を出さない。ずれた音の印だけにして、目立つようにするため）
   let overlayMarks = $derived.by(() => {
     const marks = [];
     results.forEach((result, index) => {
-      if (result === undefined || result.status === "skip") {
+      if (result === undefined || result.status === "skip" || result.status === "ok") {
         return;
       }
       const style = STATUS_STYLES[result.status];
       marks.push({ position: timeline.items[index].positions[0], color: style.color, text: style.mark });
     });
     // リズムの結果は、音符の上に出す（判定しない音には出さない）（ステップD）
+    // （ステップD-4：OK の音には印を出さない）
     rhythmResults.forEach((result, index) => {
-      if (result === undefined || result.status === "skip") {
+      if (result === undefined || result.status === "skip" || result.status === "ok") {
         return;
       }
       const style = RHYTHM_STYLES[result.status];
