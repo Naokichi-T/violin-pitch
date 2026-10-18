@@ -81,6 +81,7 @@
   // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか
   // repeatEnabled ：最後の音まで進んだら、最初の音に戻ってくり返すかどうか
   // staffHeight   ：五線譜の枠の高さの上限（CSS の書き方）
+  // measureRange  ：五線譜に描く小節の範囲 { from, to }（練習する区間の小節だけを描くとき）。null なら全部（ステップD-3）
   // ontempochange ：テンポを変えたときに呼ぶ関数（新しいテンポを渡す）
   // onfinish      ：最後まで進んで点数が出たときに呼ぶ関数（その回の音程の点数と、リズムの点数を渡す）（ステップD：リズムも渡す）
   let {
@@ -95,6 +96,7 @@
     allowOpenString,
     repeatEnabled,
     staffHeight,
+    measureRange = null,
     ontempochange = () => {},
     onfinish = () => {},
   } = $props();
@@ -883,7 +885,18 @@
 
 <!-- 五線譜：演奏中は、重ねる層に今の音の帯と結果の印を描く。終わったら、音符そのものを結果の色にする -->
 <!-- （ステップC-2：流れる縦線の目じるしと時刻も渡す） -->
-<ImportedStaff {score} noteColors={staffColors} {overlayBands} {overlayMarks} cursorKeys={timeline.cursorKeys} {cursorTime} focus={focusPosition} maxHeight={staffHeight} onselect={selectNote} />
+<ImportedStaff
+  {score}
+  noteColors={staffColors}
+  {overlayBands}
+  {overlayMarks}
+  cursorKeys={timeline.cursorKeys}
+  {cursorTime}
+  focus={focusPosition}
+  maxHeight={staffHeight}
+  {measureRange}
+  onselect={selectNote}
+/>
 
 <!-- リズムのヒントの入・切（ステップC-2）。演奏中でも切り替えられる -->
 <div class="hint-row">
