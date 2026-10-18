@@ -8,6 +8,7 @@
   //   「通し」の演奏中は、色が変わるたびに五線譜を全部描き直すと間に合わないので、この層にだけ描く。
   //   そのため、描き直し・自動スクロール・重ねる層を、それぞれ別の $effect に分けた）
   // （ステップC-2：流れる縦線（cursorKeys・cursorTime）を足した。縦線は、もう1枚の重ねる層に描き、時刻が変わるたびに位置だけを動かす）
+  // （ステップD：印を、音符の上にも出せるようにした（overlayMarks の placement: "above"）。リズムの結果に使う）
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // tick：画面の書き換えが終わるのを待つための仕組み（描いたあとにスクロールするときに使う）
@@ -34,6 +35,7 @@
   //               変わっても、五線譜は描き直さず、重ねる層だけを描き直す（「通し」の今の音に使う）
   // overlayMarks：重ねる層に描く、音符の下の小さな印の配列 [{ position: { measure, note }, color, text: "●" }, ...]（ステップC-1）
   //               変わっても、五線譜は描き直さない（「通し」の判定の結果に使う）
+  //               （ステップD：placement: "above" を付けた印は、音符の上に出す（付けなければ、今までどおり下））
   // cursorKeys  ：流れる縦線の目じるしの並び（importedTimeline.js の cursorKeys）（ステップC-2）
   // cursorTime  ：流れる縦線を出す時刻（秒。時刻表と同じ数え方）。null のときは縦線を出さない（ステップC-2）
   //               1秒に何十回も変わるが、五線譜も重ねる層も描き直さず、縦線の位置だけを動かす
@@ -63,6 +65,7 @@
   // 音符の下の印の見た目（ステップC-1）
   const MARK_FONT_SIZE = 14; // 印の文字の大きさ（ピクセル）
   const MARK_GAP = 14; // 五線（または、五線より下に出た音符）の下端から、印の文字の下端までの間（ピクセル）
+  const MARK_GAP_ABOVE = 6; // 五線（または、五線より上に出た音符）の上端から、上に出す印の文字の下端までの間（ピクセル）（ステップD）
 
   // SVG の部品を作るときに使う決まった名前（createElementNS に渡す）
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -362,9 +365,10 @@
       if (box === undefined) {
         return;
       }
-      // 五線の下端か、五線より下に出た音符の下端の、低いほうの下に置く
-      const staffBottom = staffTopOf(box) + STAFF_HEIGHT;
-      const y = Math.max(staffBottom, box.y + box.h) + MARK_GAP;
+      // 下に出す印：五線の下端か、五線より下に出た音符の下端の、低いほうの下に置く
+      // 上に出す印（ステップD）：五線の上端か、五線より上に出た音符の上端の、高いほうの上に置く
+      const staffTop = staffTopOf(box);
+      const y = mark.placement === "above" ? Math.min(staffTop, box.y) - MARK_GAP_ABOVE : Math.max(staffTop + STAFF_HEIGHT, box.y + box.h) + MARK_GAP;
       const text = document.createElementNS(SVG_NS, "text");
       text.setAttribute("x", String(box.x + box.w / 2)); // 音符の横のまん中
       text.setAttribute("y", String(y));

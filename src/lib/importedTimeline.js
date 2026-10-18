@@ -1,6 +1,7 @@
 // 読み込んだ楽譜の「お手本の時刻表」を作るファイル（ステップC-1）
 // （ステップC-2：流れる縦線の目じるし cursorKeys を足した）
 // （ステップC-3：お手本を鳴らすための、鳴らす音の並び sounds を足した）
+// （ステップD：音ごとに、リズムを判定するか（rhythm）と、出だしの見つけ方（method）を足した）
 // 「通し」で、判定する音ごとに「何秒から何秒まで鳴るか」を決める。
 // 時刻の計算は、楽譜作成アプリ（string-score）の再生の計算（playback.js の buildEvents）をそのまま使うので、
 // テンポの変化・rit.・accel.・a tempo・フェルマータ・カエスーラ・くり返し・アウフタクトが、再生とぴったり同じになる。
@@ -14,6 +15,11 @@
 //       start:     1.5                           … 鳴り始める時刻（秒。曲の頭（区間の頭）を 0 とする）
 //       end:       2.25                          … 鳴り終わる時刻（秒。次の音の始まりか、休符の始まり）
 //       judge:     true                          … 判定するか（短すぎる音は false）
+//       rhythm:    true                          … リズムを判定するか（ステップD）
+//                                                  判定しない音（judge が false）と、スラーの中で前の音と同じ高さの音は false
+//       method:    "pitch"                       … 出だしの見つけ方（ステップD。rhythm.js を参照）
+//                                                  "pitch"：目標の高さになった時刻（前の音と高さが違う・前が休符）
+//                                                  "volume"：音量が下がってまた上がった時刻（前の音と同じ高さで、つながっている）
 //     }
 //   ],
 //   clicks: [{ time, strong }, ...]  … 拍の頭の時刻（秒）と、1拍目かどうか（カウントとメトロノームに使う）
@@ -38,6 +44,9 @@ import { toRenderScore, buildTargets, toPitchNote } from "#lib/imported.js";
 
 // 音符の高さを、低い順の配列にする関数を読み込む（重音なら全部）（ステップC-3）
 import { notePitches } from "#lib/musicxml/model.js";
+
+// 音の音番号（半音ごとの通し番号）を計算する関数を読み込む（前の音と同じ高さかを調べるのに使う）（ステップD）
+import { getNoteNumber } from "#lib/score.js";
 
 // ===== 判定に関する設定値 =====
 
@@ -97,9 +106,18 @@ export function buildTimeline(record, tempo, expandRepeats) {
   // 判定から外す音（灰色の音）の音符は、判定する音の並びにないので、当てはまらずに飛ばされる
   const starts = new Array(targets.length).fill(null); // 判定する音ごとの、鳴り始める時刻（ティック）
   const ends = new Array(targets.length).fill(null); // 判定する音ごとの、鳴り終わる時刻（ティック）
+  const slurred = new Array(targets.length).fill(false); // 判定する音ごとの、前の音からスラーでつながっているか（ステップD）
   let k = 0; // 今、当てはめようとしている判定する音の番号
   let p = 0; // その音の positions の、何番目の音符を待っているか
+  let slurOpen = false; // 今、スラーの中か（スラーの始まりの音符から、終わりの音符の1つ前まで true）（ステップD）
   result.highlights.forEach((h) => {
+    // スラーの状態を進める（灰色の音の音符も含めて、全部の音符で数える）（ステップD）
+    //   この音符の前からスラーの中なら、この音符は前の音からスラーでつながっている
+    const note = record.partMeasures[h.measure].notes[h.note];
+    const slurredFromPrevious = slurOpen;
+    if (note.slur === "start") slurOpen = true;
+    if (note.slur === "stop") slurOpen = false;
+
     if (k >= targets.length) {
       return;
     }
@@ -109,6 +127,7 @@ export function buildTimeline(record, tempo, expandRepeats) {
     }
     if (p === 0) {
       starts[k] = h.startTick; // 1つ目の音符の始まりが、この音の始まり
+      slurred[k] = slurredFromPrevious; // ステップD
     }
     ends[k] = h.endTick; // タイでつながった最後の音符の終わりが、この音の終わり
     p += 1;
@@ -140,6 +159,27 @@ export function buildTimeline(record, tempo, expandRepeats) {
 
   // お手本で鳴らす音の並び（ステップC-3）
   const sounds = buildSounds(record, result, tickSeconds);
+
+  // 音ごとに、リズムを判定するかと、出だしの見つけ方を決める（ステップD）
+  items.forEach((item, index) => {
+    // この音と同じ時刻に始まる、鳴らす音（灰色の音も入っている並び）と、その1つ前の音
+    const soundIndex = sounds.findIndex((sound) => Math.abs(sound.start - item.start) < 1e-6);
+    const previousSound = soundIndex > 0 ? sounds[soundIndex - 1] : null;
+
+    // 1つ前の音と、すき間なくつながっているか（休符をはさんでいないか）
+    const connected = previousSound !== null && Math.abs(previousSound.end - item.start) < 1e-3;
+
+    // 1つ前の音（重音ならいちばん上の音）と、同じ高さか
+    const previousTop = previousSound !== null ? previousSound.pitches[previousSound.pitches.length - 1] : null;
+    const samePitch = previousTop !== null && getNoteNumber(previousTop) === getNoteNumber(item.note);
+
+    // 出だしの見つけ方：同じ高さで、つながっているときだけ音量で見つける
+    item.method = connected && samePitch ? "volume" : "pitch";
+
+    // リズムを判定するか：音程を判定しない音（短すぎる音）と、スラーの中で同じ高さが続く音は判定しない
+    // （スラーの中の同じ高さの音は、高さも音量も変わらないので、出だしを見つけられないため）
+    item.rhythm = item.judge && !(item.method === "volume" && slurred[index]);
+  });
 
   return { items: items, clicks: clicks, beatSeconds: beatSecondsAt(score, items, tickSeconds), cursorKeys: cursorKeys, sounds: sounds };
 }

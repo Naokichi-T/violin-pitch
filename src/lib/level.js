@@ -5,10 +5,12 @@
 //   id        ：レベルを区別するための名前（保存するときにも使う）
 //   name      ：画面に表示する名前
 //   tolerance ：「OK」とする範囲（セント）。例：10 なら、−10〜+10 が OK
-// OK の範囲を変えたいときは、ここの tolerance の数字を書き換える
+//   rhythmTolerance：リズムの「OK」とする範囲（秒）。例：0.1 なら、お手本の始まりから ±0.1秒が OK（ステップD）
+//                    （読み込んだ楽譜の「通し」のリズムの判定で使う）
+// OK の範囲を変えたいときは、ここの tolerance・rhythmTolerance の数字を書き換える
 export const LEVELS = [
-  { id: "normal", name: "ノーマル", tolerance: 10 },
-  { id: "easy", name: "イージー", tolerance: 20 }, // 2026/10/18：25 から 20 に変えた
+  { id: "normal", name: "ノーマル", tolerance: 10, rhythmTolerance: 0.1 },
+  { id: "easy", name: "イージー", tolerance: 20, rhythmTolerance: 0.15 }, // 2026/10/18：tolerance を 25 から 20 に変えた
 ];
 
 // 最初に選ばれているレベルの id（ノーマル）

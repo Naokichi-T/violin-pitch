@@ -1,5 +1,6 @@
 // 波形から周波数を検出する関数を読み込む
-import { detectPitch } from "./pitch.js";
+// （ステップD：音の大きさ（RMS）を計算する関数も読み込む）
+import { detectPitch, calculateRms } from "./pitch.js";
 
 // ===== マイクの音を調べるための設定値 =====
 
@@ -10,6 +11,11 @@ const FFT_SIZE = 4096;
 // ためた値の中央値を使うことで、たまに大きく外れた値が混ざっても影響を受けないようにする
 // 多くすると値が安定するが、弾いた音への反応が遅くなる
 const HISTORY_SIZE = 12;
+
+// 音量（RMS）を計算するときに使う、波形の最後のほうのデータの個数（ステップD）
+// 高さを調べるときの 4096個（約0.085秒）だと、弓を返したときの短い音量の下がりがならされて見えにくいので、
+// 最後の 1024個（約0.02秒）だけで計算する
+const RMS_SIZE = 1024;
 
 // ===== マイクの音を調べるための部品 =====
 
@@ -69,8 +75,10 @@ function calculateMedian(values) {
  * ブラウザの決まりで、ボタンを押すなどの操作をきっかけにしないとマイクを使えないので、
  * この関数は、ボタンを押したときの処理の中から呼ぶこと。
  * マイクが使えないときは、理由を日本語で書いたエラーを投げる。
- * @param {(frequency: number|null) => void} onPitch
+ * @param {(frequency: number|null, rms?: number, rawFrequency?: number|null) => void} onPitch
  *   音の高さが分かるたびに呼ばれる関数。周波数（Hz）が渡される。音が出ていないときは null が渡される
+ *   （ステップD：2つ目に音量（RMS。0 に近いほど静か）、3つ目に、なめらかにする前のその回の周波数（検出できないときは null）も渡す。
+ *    リズムの判定で、音の出だしを見つけるのに使う。1つ目だけを受け取る使い方は、今までどおり動く）
  */
 export async function startMicrophone(onPitch) {
   // すでに動いていた場合は、いったん止める
@@ -150,10 +158,14 @@ function update() {
   // 波形から周波数を検出する（検出できなかったときは null が入る）
   const detected = detectPitch(waveform, audioContext.sampleRate);
 
+  // 波形の最後のほう（RMS_SIZE 個）の音量（ステップD）
+  const rms = calculateRms(waveform.subarray(waveform.length - RMS_SIZE));
+
   if (detected === null) {
     // 検出できなかったとき：ためた値を消して、「音が出ていない」と伝える
+    // （ステップD：音量と、なめらかにする前の値（null）も一緒に伝える）
     history = [];
-    listener(null);
+    listener(null, rms, null);
   } else {
     // 検出できたとき：検出値を配列の最後に追加する
     history.push(detected);
@@ -164,7 +176,8 @@ function update() {
     }
 
     // ためた値の中央値を伝える
-    listener(calculateMedian(history));
+    // （ステップD：音量と、なめらかにする前のその回の値も一緒に伝える）
+    listener(calculateMedian(history), rms, detected);
   }
 
   // 次の描画のタイミングで、もう一度この関数を呼ぶ

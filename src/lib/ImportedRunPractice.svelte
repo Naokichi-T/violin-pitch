@@ -19,6 +19,12 @@
   // ［♪ お手本を聴く］を押すと、マイクを使わずに、時刻表どおりにお手本を電子音で鳴らす（判定はしない）。
   // 短いカウントのあと、オレンジの帯・流れる縦線・メトロノームも、本番と同じように動く。
   // 高さは、選んでいる音律の高さ。灰色の音も鳴らし、重音は全部の音を鳴らす（装飾は付けず、書いてある音だけ）。
+  //
+  // 【リズムの判定】（ステップD）
+  // 演奏中、マイクの記録（時刻・なめらかにする前の高さ・音量）をためておき、音が終わったら、
+  // その音の出だしの時刻を見つけて（rhythm.js）、お手本の始まりとのずれを出す。
+  // ずれが判定のレベルの幅（ノーマル ±0.1秒・イージー ±0.15秒）以内なら OK、それより早い・遅いは「早い」「遅い」。
+  // 結果は、音符の上に印（OK ●・早い ←・遅い →・見つからない ?）で出し、点数は音程とリズムを並べて出す。
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -35,7 +41,11 @@
   import { getFrequency, getOpenStringFrequency } from "#lib/tuning.js";
 
   // 1音ごとの点数と、全体の点数を計算する関数を読み込む（今の「通し」と同じ）
-  import { centsToPoints, getTotalScore } from "#lib/scoring.js";
+  // （ステップD：リズムの1音ごとの点数と、全体の点数を計算する関数も読み込む）
+  import { centsToPoints, getTotalScore, secondsToPoints, getRhythmTotalScore } from "#lib/scoring.js";
+
+  // マイクの記録から、音の出だしの時刻を見つける関数を読み込む（ステップD）
+  import { findOnset } from "#lib/rhythm.js";
 
   // マイクで音の高さを調べはじめる関数と、止める関数を読み込む
   import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
@@ -66,12 +76,27 @@
   // initialTempo  ：最初のテンポ（♩＝○○）
   // temperamentId ：音律の id
   // tolerance     ：OK とする範囲（セント）
+  // rhythmTolerance：リズムの OK とする範囲（秒）（ステップD）
   // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか
   // repeatEnabled ：最後の音まで進んだら、最初の音に戻ってくり返すかどうか
   // staffHeight   ：五線譜の枠の高さの上限（CSS の書き方）
   // ontempochange ：テンポを変えたときに呼ぶ関数（新しいテンポを渡す）
-  // onfinish      ：最後まで進んで点数が出たときに呼ぶ関数（その回の音程の点数を渡す）
-  let { score, baseColors, getTimeline, currentKey, initialTempo, temperamentId, tolerance, allowOpenString, repeatEnabled, staffHeight, ontempochange = () => {}, onfinish = () => {} } = $props();
+  // onfinish      ：最後まで進んで点数が出たときに呼ぶ関数（その回の音程の点数と、リズムの点数を渡す）（ステップD：リズムも渡す）
+  let {
+    score,
+    baseColors,
+    getTimeline,
+    currentKey,
+    initialTempo,
+    temperamentId,
+    tolerance,
+    rhythmTolerance,
+    allowOpenString,
+    repeatEnabled,
+    staffHeight,
+    ontempochange = () => {},
+    onfinish = () => {},
+  } = $props();
 
   // ===== テンポとカウントに関する設定値 =====
 
@@ -122,6 +147,15 @@
   // 判定しない音（短すぎる音）の色（灰色）
   const SKIP_COLOR = "#9e9e9e";
 
+  // リズムの結果の種類ごとの、表示する文字と、色と、音符の上に出す印（ステップD）
+  // （色は、音程の結果と見分けられるように、早い・遅いは紫にする）
+  const RHYTHM_STYLES = {
+    ok: { label: "OK", color: "#2e7d32", mark: "●" },
+    early: { label: "早い", color: "#6a1b9a", mark: "←" },
+    late: { label: "遅い", color: "#6a1b9a", mark: "→" },
+    missing: { label: "出だしが見つからない", color: "#9e9e9e", mark: "?" },
+  };
+
   // 演奏中の今の音の帯の色（今の「通し」の「目標の音」と同じオレンジ）
   const CURRENT_COLOR = "#e65100";
 
@@ -159,7 +193,11 @@
   // 1つの結果は { status, cents, openString }（status は 'ok'・'high'・'low'・'none'・'skip'）
   let results = $state([]);
 
-  // くり返しの、回ごとの点数
+  // 1音ごとのリズムの判定の結果（時刻表と同じ順番。まだ判定していない音は undefined）（ステップD）
+  // 1つの結果は { status, seconds }（status は 'ok'・'early'・'late'・'missing'・'skip'。seconds はずれ（秒。マイナスは早い）か null）
+  let rhythmResults = $state([]);
+
+  // くり返しの、回ごとの点数（ステップD：{ pitch: 音程の点数, rhythm: リズムの点数 } にした）
   let roundScores = $state([]);
 
   // 結果を見るためにタップした音が、時刻表の何番目か。選んでいないときは null
@@ -217,6 +255,12 @@
   // メトロノームで、次に鳴らす拍の頭の番号（時刻表の clicks の何番目か）（ステップC-2）
   let nextClickIndex = 0;
 
+  // マイクの記録 { time, frequency, rms } の並び（リズムの判定に使う）（ステップD）
+  let frames = [];
+
+  // メトロノームのクリックを鳴らした時刻（秒）の並び（クリックの音を、出だしと間違えないようにするため）（ステップD）
+  let playedClickTimes = [];
+
   // お手本で、次に鳴らす音の番号（時刻表の sounds の何番目か）と、鳴らしている音の一覧（止めるときに使う）（ステップC-3）
   let nextSoundIndex = 0;
   let previewVoices = [];
@@ -231,6 +275,23 @@
 
   // 全体の点数（判定した音の点数の平均）
   let totalScore = $derived(getTotalScore(judgedCents));
+
+  // リズムを判定した音のずれ（秒）の並び（判定しない音を除く。見つからない音は null）（ステップD）
+  let judgedSeconds = $derived(rhythmResults.filter((result) => result !== undefined && result.status !== "skip").map((result) => result.seconds));
+
+  // リズムの全体の点数（ステップD）
+  let rhythmScore = $derived(getRhythmTotalScore(judgedSeconds));
+
+  // リズムの結果の種類ごとの数（ステップD）
+  let rhythmCounts = $derived.by(() => {
+    const counts = { ok: 0, early: 0, late: 0, missing: 0, skip: 0 };
+    for (const result of rhythmResults) {
+      if (result !== undefined) {
+        counts[result.status] += 1;
+      }
+    }
+    return counts;
+  });
 
   // 結果の種類ごとの数
   let statusCounts = $derived.by(() => {
@@ -285,6 +346,14 @@
       }
       const style = STATUS_STYLES[result.status];
       marks.push({ position: timeline.items[index].positions[0], color: style.color, text: style.mark });
+    });
+    // リズムの結果は、音符の上に出す（判定しない音には出さない）（ステップD）
+    rhythmResults.forEach((result, index) => {
+      if (result === undefined || result.status === "skip") {
+        return;
+      }
+      const style = RHYTHM_STYLES[result.status];
+      marks.push({ position: timeline.items[index].positions[0], color: style.color, text: style.mark, placement: "above" });
     });
     return marks;
   });
@@ -411,6 +480,7 @@
   async function start() {
     errorMessage = "";
     results = [];
+    rhythmResults = []; // ステップD
     roundScores = [];
     selectedIndex = null;
     phase = "preparing";
@@ -443,6 +513,7 @@
   function startPreview() {
     errorMessage = "";
     results = [];
+    rhythmResults = []; // ステップD
     roundScores = [];
     selectedIndex = null;
     isPreview = true;
@@ -473,6 +544,8 @@
     roundStarted = false;
     nextClickIndex = 0; // ステップC-2
     nextSoundIndex = 0; // ステップC-3
+    frames = []; // ステップD
+    playedClickTimes = []; // ステップD
     currentIndex = null;
     startTime = performance.now();
     phase = "countIn";
@@ -515,6 +588,7 @@
         // この回の最初の音が始まった：前の回の結果を消す（くり返しの2回目から。前の回の結果は、カウントの間に見直せる）
         roundStarted = true;
         results = [];
+        rhythmResults = []; // ステップD
         selectedIndex = null;
         phase = "playing";
       }
@@ -533,6 +607,7 @@
         // 終わった音を、順に判定する（マイクの高さの遅れのぶん、音が終わってから少し待つ）
         while (nextJudgeIndex < items.length && t >= items[nextJudgeIndex].end + DETECTION_DELAY) {
           judgeNote(nextJudgeIndex);
+          judgeRhythm(nextJudgeIndex); // ステップD
           nextJudgeIndex += 1;
         }
       }
@@ -556,6 +631,8 @@
         if (metronomeEnabled) {
           // すぐに鳴らす（1拍目は高い音）
           scheduleClick(getAudioTime(), runTimeline.clicks[nextClickIndex].strong);
+          // 鳴らした時刻を覚えておく（リズムの判定で、クリックの音を出だしと間違えないように）（ステップD）
+          playedClickTimes.push(t);
         }
         nextClickIndex += 1;
       }
@@ -625,12 +702,12 @@
     currentIndex = null;
     cursorTime = null; // 流れる縦線を消す（ステップC-2）
 
-    // この回の点数を、練習ページに伝える（最高点を記録するため）
-    onfinish(totalScore);
+    // この回の点数（音程とリズム）を、練習ページに伝える（最高点を記録するため）（ステップD：リズムも渡す）
+    onfinish(totalScore, rhythmScore);
 
     // くり返しているとき（または、途中でくり返しをやめたとき）は、この回の点数を記録する
     if (repeatEnabled || roundScores.length > 0) {
-      roundScores.push(totalScore);
+      roundScores.push({ pitch: totalScore, rhythm: rhythmScore });
     }
 
     if (repeatEnabled) {
@@ -649,10 +726,21 @@
    * マイクが音の高さを調べるたびに呼ばれる関数
    * 演奏中に、それぞれの音の「後ろ6割」の時間に入っていれば、その音の高さとして集めておく。
    * マイクの高さは遅れて届くので、DETECTION_DELAY だけ前の時刻の高さとして扱う。
-   * @param {number|null} frequency - 検出した周波数（Hz）。音が出ていないときは null
+   * （ステップD：リズムの判定のために、音量と、なめらかにする前の高さも受け取って、記録にためておく）
+   * @param {number|null} frequency - 検出した周波数（Hz。なめらかにしたもの）。音が出ていないときは null
+   * @param {number} rms - 音量（ステップD）
+   * @param {number|null} rawFrequency - なめらかにする前の、その回の周波数（Hz）（ステップD）
    */
-  function handlePitch(frequency) {
-    if (phase !== "playing" || frequency === null || runTimeline === null) {
+  function handlePitch(frequency, rms = 0, rawFrequency = null) {
+    if (phase !== "playing" || runTimeline === null) {
+      return;
+    }
+
+    // リズムの判定のための記録（音が出ていないときも、音量が下がったことが分かるように記録する）（ステップD）
+    frames.push({ time: musicTime(), frequency: rawFrequency, rms: rms });
+
+    // ここから下は音程の判定のため：音が出ていないときは何もしない
+    if (frequency === null) {
       return;
     }
     const items = runTimeline.items;
@@ -733,6 +821,40 @@
   }
 
   /**
+   * 1つの音のリズムの判定をして、結果を記録する関数（ステップD）
+   * マイクの記録から出だしの時刻を見つけて、お手本の始まりとのずれで決める。
+   * @param {number} index - 時刻表の何番目の音か
+   */
+  function judgeRhythm(index) {
+    const item = runTimeline.items[index];
+
+    // リズムを判定しない音（短すぎる音・スラーの中で同じ高さが続く音）
+    if (!item.rhythm) {
+      rhythmResults[index] = { status: "skip", seconds: null };
+      return;
+    }
+
+    // 出だしの時刻を見つける
+    const previous = index > 0 ? runTimeline.items[index - 1] : null;
+    const targetFrequency = getFrequency(item.note, currentKey, temperamentId);
+    const onset = findOnset(frames, item, previous, targetFrequency, playedClickTimes);
+    if (onset === null) {
+      rhythmResults[index] = { status: "missing", seconds: null };
+      return;
+    }
+
+    // お手本の始まりとのずれ（秒。マイナスは早い）で決める
+    const seconds = onset - item.start;
+    let status = "ok";
+    if (seconds < -rhythmTolerance) {
+      status = "early";
+    } else if (seconds > rhythmTolerance) {
+      status = "late";
+    }
+    rhythmResults[index] = { status: status, seconds: seconds };
+  }
+
+  /**
    * 「通し」の練習を途中でやめる関数（「やめる」ボタンと、部品が消えるとき）
    * そこまでの結果は画面に残す（次に始めるときに消える）。
    */
@@ -792,14 +914,35 @@
     <!-- 休符の間は「−」を出す -->
     <p class="status-main">{currentIndex !== null ? noteToText(timeline.items[currentIndex].note) : "−"}</p>
   {:else if phase === "finished"}
-    <p class="status-caption">点数（音程）</p>
-    <p class="status-main finished">{totalScore} 点</p>
-    <p class="status-caption">
-      OK {statusCounts.ok}　高い {statusCounts.high}　低い {statusCounts.low}　音なし {statusCounts.none}
-      {#if statusCounts.skip > 0}
-        　判定しない {statusCounts.skip}
-      {/if}
-    </p>
+    <!-- 点数：音程とリズムを並べて出す（ステップD） -->
+    <div class="score-pair">
+      <div class="score-box">
+        <p class="status-caption">音程</p>
+        <p class="status-main finished">{totalScore}<span class="unit">点</span></p>
+        <!-- 「名前 数」ごとに span で囲んで、途中で折り返さないようにする -->
+        <p class="status-caption small">
+          <span class="count">OK {statusCounts.ok}</span>
+          <span class="count">高い {statusCounts.high}</span>
+          <span class="count">低い {statusCounts.low}</span>
+          <span class="count">音なし {statusCounts.none}</span>
+        </p>
+      </div>
+      <div class="score-box">
+        <p class="status-caption">リズム</p>
+        <p class="status-main finished rhythm">{rhythmScore}<span class="unit">点</span></p>
+        <p class="status-caption small">
+          <span class="count">OK {rhythmCounts.ok}</span>
+          <span class="count">早い {rhythmCounts.early}</span>
+          <span class="count">遅い {rhythmCounts.late}</span>
+          <span class="count">見つからない {rhythmCounts.missing}</span>
+        </p>
+      </div>
+    </div>
+    {#if statusCounts.skip > 0 || rhythmCounts.skip > statusCounts.skip}
+      <p class="status-caption small">
+        判定しない：音程 {statusCounts.skip}・リズム {rhythmCounts.skip}
+      </p>
+    {/if}
   {:else}
     <p class="status-caption">「始める」を押すと、カウントが{countInBeats}拍鳴ります</p>
     <p class="status-main idle">♩＝{tempo}</p>
@@ -822,6 +965,20 @@
     {#if result.openString === true}
       （開放弦）
     {/if}
+    <!-- リズムの結果（ステップD） -->
+    {#if rhythmResults[selectedIndex] !== undefined}
+      {@const rhythm = rhythmResults[selectedIndex]}
+      <br />
+      リズム：
+      {#if rhythm.status === "skip"}
+        判定しない
+      {:else}
+        {RHYTHM_STYLES[rhythm.status].label}
+        {#if rhythm.seconds !== null}
+          {rhythm.seconds >= 0 ? "+" : "−"}{Math.abs(rhythm.seconds).toFixed(2)}秒・{secondsToPoints(rhythm.seconds)}点
+        {/if}
+      {/if}
+    {/if}
   </p>
 {:else if phase === "finished"}
   <p class="hint">音符をタップすると、その音の結果が見られます</p>
@@ -831,7 +988,8 @@
 {#if roundScores.length > 0}
   <ul class="round-list">
     {#each roundScores as roundScore, index}
-      <li class="round">{index + 1}回目 <strong>{roundScore}点</strong></li>
+      <!-- ステップD：音程とリズムの点数を並べる -->
+      <li class="round">{index + 1}回目 音程 <strong>{roundScore.pitch}点</strong>・リズム <strong>{roundScore.rhythm}点</strong></li>
     {/each}
   </ul>
 {/if}
@@ -906,6 +1064,42 @@
     font-weight: bold;
     color: #e65100;
     font-variant-numeric: tabular-nums;
+  }
+
+  /* 音程とリズムの点数を横に並べる（ステップD） */
+  .score-pair {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  /* 点数1つぶん */
+  .score-box {
+    flex: 1;
+    max-width: 220px;
+  }
+
+  /* 「点」の文字：小さく */
+  .unit {
+    margin-left: 2px;
+    font-size: 1.2rem;
+  }
+
+  /* リズムの点数の数字：紫 */
+  .status-main.finished.rhythm {
+    color: #6a1b9a;
+  }
+
+  /* 結果の数：小さめ */
+  .status-caption.small {
+    font-size: 0.75rem;
+  }
+
+  /* 結果の数の「名前 数」1つぶん：途中で折り返さない。となりとの間を少しあける */
+  .count {
+    display: inline-block;
+    margin: 0 4px;
+    white-space: nowrap;
   }
 
   /* カウントの数字：グレー */

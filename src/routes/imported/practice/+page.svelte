@@ -8,6 +8,7 @@
   // （ステップB-2：目標の音を見つけやすくするため、音符を明るい青にして、後ろにうすい青の帯を敷くようにした）
   // （ステップC-1：「通し」を足した。お手本の時刻表どおりに進んで、音程を判定する。音程の最高点を記録する。
   //   選んだモードは、手入力の楽譜の練習ページと共通の設定として保存する）
+  // （ステップD：リズムの判定を足したので、リズムの OK の幅を渡し、リズムの最高点も記録・表示する）
 
   // onMount：このページが画面に表示された直後に処理をするための仕組み
   import { onMount } from "svelte";
@@ -46,7 +47,8 @@
   import { buildTimeline, sliceTimeline } from "#lib/importedTimeline.js";
 
   // 「通し」の音程の最高点を記録する関数を読み込む（ステップC-1）
-  import { recordBestPitchScore } from "#lib/imported.js";
+  // （ステップD：リズムの最高点を記録する関数も読み込む）
+  import { recordBestPitchScore, recordBestRhythmScore } from "#lib/imported.js";
 
   // ===== 練習のモードに関する設定値（ステップB） =====
 
@@ -116,6 +118,10 @@
   let bestPitchScore = $state(null);
   let isNewRecord = $state(false);
 
+  // リズムの最高点（まだ無いときは null）と、更新した直後かどうか（ステップD）
+  let bestRhythmScore = $state(null);
+  let isNewRhythmRecord = $state(false);
+
   // ===== 練習する区間（ステップB） =====
 
   // 区間を決めたときに使った、判定する音の並び（くり返しを含めるかどうかで、並びが変わるため）
@@ -168,6 +174,9 @@
   // 「OK」とする範囲（セント）。選択中のレベルによって変わる
   let tolerance = $derived(getLevel(levelId).tolerance);
 
+  // リズムの「OK」とする範囲（秒）。選択中のレベルによって変わる（ステップD）
+  let rhythmTolerance = $derived(getLevel(levelId).rhythmTolerance);
+
   // 開放弦の設定を、画面に表示するかどうか（純正律のときだけ表示する。手入力の楽譜の練習ページと同じ）
   let showsOpenStringSetting = $derived(record !== null && record.temperamentId === "just");
 
@@ -204,6 +213,7 @@
         repeatsExist = hasRepeats(found);
         runTempo = found.tempo; // ステップC-1
         bestPitchScore = typeof found.bestPitchScore === "number" ? found.bestPitchScore : null; // ステップC-1
+        bestRhythmScore = typeof found.bestRhythmScore === "number" ? found.bestRhythmScore : null; // ステップD
       }
     }
 
@@ -287,20 +297,26 @@
   }
 
   /**
-   * 「通し」で最後まで弾けたときに、音程の最高点を記録する関数（ステップC-1）
+   * 「通し」で最後まで弾けたときに、音程とリズムの最高点を記録する関数（ステップC-1。ステップD でリズムも足した）
    * 区間を指定せずに、楽譜の全体を弾いたときだけ記録する（手入力の楽譜の「通し」と同じ決まり）。
+   * 音程とリズムは、別々に記録する（片方だけ更新することもある）。
    * @param {number} points - その回の音程の点数（0〜100）
+   * @param {number} rhythmPoints - その回のリズムの点数（0〜100）（ステップD）
    */
-  function handleRunFinish(points) {
+  function handleRunFinish(points, rhythmPoints) {
     if (rangeStart !== null) {
       return;
     }
     const result = recordBestPitchScore(record.id, points);
-    if (result === null) {
-      return;
+    if (result !== null) {
+      bestPitchScore = result.bestScore;
+      isNewRecord = result.isNewRecord;
     }
-    bestPitchScore = result.bestScore;
-    isNewRecord = result.isNewRecord;
+    const rhythmResult = recordBestRhythmScore(record.id, rhythmPoints);
+    if (rhythmResult !== null) {
+      bestRhythmScore = rhythmResult.bestScore;
+      isNewRhythmRecord = rhythmResult.isNewRecord;
+    }
   }
 
   /**
@@ -445,12 +461,19 @@
     </div>
 
     <!-- 音程の最高点（ステップC-1）：記録があるとき・区間を指定しているときに出す -->
-    {#if bestPitchScore !== null || rangeStart !== null}
+    <!-- （ステップD：リズムの最高点も並べる） -->
+    {#if bestPitchScore !== null || bestRhythmScore !== null || rangeStart !== null}
       <p class="best-row">
         {#if bestPitchScore !== null}
-          最高点（音程） <strong>{bestPitchScore}点</strong>
+          最高点 音程 <strong>{bestPitchScore}点</strong>
           {#if isNewRecord}
-            <span class="new-record">更新しました！</span>
+            <span class="new-record">更新！</span>
+          {/if}
+        {/if}
+        {#if bestRhythmScore !== null}
+          <span class="best-item">リズム <strong class="rhythm">{bestRhythmScore}点</strong></span>
+          {#if isNewRhythmRecord}
+            <span class="new-record">更新！</span>
           {/if}
         {/if}
         {#if rangeStart !== null}
@@ -577,6 +600,7 @@
               initialTempo={runTempo}
               temperamentId={record.temperamentId}
               {tolerance}
+              {rhythmTolerance}
               {allowOpenString}
               {repeatEnabled}
               staffHeight={STAFF_HEIGHT_PRACTICE}
@@ -653,6 +677,16 @@
   /* 最高点の数字：緑の太字 */
   .best-row strong {
     color: #2e7d32;
+  }
+
+  /* リズムの最高点：音程の最高点との間をあける（ステップD） */
+  .best-item {
+    margin-left: 8px;
+  }
+
+  /* リズムの最高点の数字：紫（「通し」のリズムの点数と同じ色）（ステップD） */
+  .best-row strong.rhythm {
+    color: #6a1b9a;
   }
 
   /* 「更新しました！」：オレンジの太字 */

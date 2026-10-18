@@ -5,6 +5,7 @@
   // （ステップA-1b：同じ名前のときの上書き・別に追加、並び替え、削除、MusicXML を作れるアプリの紹介を足した）
   // （ステップA-2：楽譜ごとに［練習］ボタンを足した。押すと練習ページ /imported/practice?id=○○ が開く）
   // （ステップC-1：最高点を「最高点（音程）」として出すようにした（bestPitchScore））
+  // （ステップD：リズムの最高点（bestRhythmScore）も並べて出すようにした）
 
   // onMount：このページが画面に表示された直後に処理をするための仕組み
   import { onMount } from "svelte";
@@ -328,9 +329,17 @@
             <!-- 調・読み込んだ日時 -->
             <p class="score-detail">{getKeyLabel(getKey(score.keyId))}・{formatDate(score.importedAt)}</p>
 
-            <!-- 「通し」の音程の最高点：記録があるときだけ表示する（ステップC-1） -->
-            {#if typeof score.bestPitchScore === "number"}
-              <p class="score-detail best">最高点（音程） {score.bestPitchScore}点</p>
+            <!-- 「通し」の最高点：記録があるときだけ表示する（ステップC-1 は音程、ステップD でリズムも足した） -->
+            {#if typeof score.bestPitchScore === "number" || typeof score.bestRhythmScore === "number"}
+              <p class="score-detail best">
+                最高点
+                {#if typeof score.bestPitchScore === "number"}
+                  音程 {score.bestPitchScore}点
+                {/if}
+                {#if typeof score.bestRhythmScore === "number"}
+                  ・リズム {score.bestRhythmScore}点
+                {/if}
+              </p>
             {/if}
           </div>
 

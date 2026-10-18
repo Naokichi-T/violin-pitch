@@ -4,6 +4,7 @@
 // （ステップB：判定する音の並びを作る・区間を決める・くり返しがあるかを調べる関数を足した）
 // （ステップC-1：「通し」の音程の最高点 bestPitchScore を記録する関数を足した。最高点は音程とリズムで別々に持つ）
 // （ステップC-3：toPitchNote を、ほかのファイルからも使えるようにした）
+// （ステップD：「通し」のリズムの最高点 bestRhythmScore を記録する関数を足した）
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -23,7 +24,7 @@
 //   partMeasures:  選んだパートの小節（音符の並び。楽譜作成アプリと同じ形）
 //   importedAt:    読み込んだ日時（ミリ秒の数字）
 //   bestPitchScore：「通し」の音程の最高点（ステップC-1。まだ無いときは、項目そのものが無い）
-//                   （リズムの最高点は、ステップDで bestRhythmScore として別に持つ予定）
+//   bestRhythmScore：「通し」のリズムの最高点（ステップD。まだ無いときは、項目そのものが無い）
 // }
 
 // 楽譜作成アプリの計算の関数を読み込む（調・高さを数にする・重音の高さの並び・ハーモニクスのひし形）
@@ -227,9 +228,14 @@ export function replaceImportedScore(id, record) {
   // 新しい楽譜を作る（id は前のまま、読み込んだ日時は今）
   const score = { ...record, id: old.id, importedAt: Date.now() };
 
-  // 楽譜の中身が同じで、前に音程の最高点があれば、最高点を引き継ぐ（ステップC-1：bestPitchScore にした）
-  if (toComparableText(old) === toComparableText(record) && typeof old.bestPitchScore === "number") {
-    score.bestPitchScore = old.bestPitchScore;
+  // 楽譜の中身が同じなら、前の最高点（音程・リズム）を引き継ぐ（ステップC-1：bestPitchScore、ステップD：bestRhythmScore）
+  if (toComparableText(old) === toComparableText(record)) {
+    if (typeof old.bestPitchScore === "number") {
+      score.bestPitchScore = old.bestPitchScore;
+    }
+    if (typeof old.bestRhythmScore === "number") {
+      score.bestRhythmScore = old.bestRhythmScore;
+    }
   }
 
   // 一覧の同じ場所に入れ替えて、書き込む
@@ -644,6 +650,29 @@ export function findRange(targets, first, second) {
  *   その id の楽譜がないときや、書き込めなかったときは null
  */
 export function recordBestPitchScore(id, points) {
+  return recordBest(id, "bestPitchScore", points);
+}
+
+/**
+ * 「通し」のリズムの点数を、その楽譜の最高点と比べて、上回っていたら記録する関数（ステップD）
+ * 最高点は、読み込んだ楽譜の中に bestRhythmScore という名前で入れておく。
+ * @param {string} id - 楽譜の id
+ * @param {number} points - 今回の点数（0〜100）
+ * @returns {{bestScore: number, isNewRecord: boolean}|null} recordBestPitchScore と同じ形
+ */
+export function recordBestRhythmScore(id, points) {
+  return recordBest(id, "bestRhythmScore", points);
+}
+
+/**
+ * 点数を、その楽譜の最高点と比べて、上回っていたら記録する関数（このファイルの中だけで使う）（ステップD）
+ * 音程とリズムで、入れておく名前（field）だけが違うので、まとめた。
+ * @param {string} id - 楽譜の id
+ * @param {string} field - 最高点を入れておく名前（"bestPitchScore" か "bestRhythmScore"）
+ * @param {number} points - 今回の点数（0〜100）
+ * @returns {{bestScore: number, isNewRecord: boolean}|null} 記録した後の最高点と、更新したかどうか（楽譜がない・書き込めないときは null）
+ */
+function recordBest(id, field, points) {
   // 今の一覧を読み込んで、楽譜を探す
   const scores = loadImportedScores();
   const score = scores.find((item) => item.id === id);
@@ -652,11 +681,11 @@ export function recordBestPitchScore(id, points) {
   }
 
   // これまでの最高点（まだ無いときは null）
-  const previousBest = typeof score.bestPitchScore === "number" ? score.bestPitchScore : null;
+  const previousBest = typeof score[field] === "number" ? score[field] : null;
 
   // 最高点がまだ無いとき、または、今回の点数のほうが高いときは、更新する
   if (previousBest === null || points > previousBest) {
-    score.bestPitchScore = points;
+    score[field] = points;
     if (!writeImportedScores(scores)) {
       return null;
     }
