@@ -27,6 +27,12 @@
   // 結果は、音符の上に印（OK ●・早い ←・遅い →・見つからない ?）で出し、点数は音程とリズムを並べて出す。
   // （ステップD-4：合っていた音（OK）は、印を出さず、音符も黒のままにした。ずれた音が目立つようにするため。
   //   合っていた音も、タップすれば結果が見られる）
+  //
+  // 【練習中の画面】（ステップE-1）
+  // スマホでも楽譜を広く見られるように、動いている間（マイクの準備・カウント・演奏中・くり返しの間）は、
+  // 楽譜と「やめる」ボタンだけにする（カウントの間は、カウントの数字も「やめる」ボタンの横に出す）。
+  // 楽譜の枠は、画面の高さいっぱいに広げる（音符の大きさは変わらない）。
+  // 練習ページの設定なども隠してもらえるように、動いているかどうかが変わるたびに、練習ページに知らせる。
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -83,8 +89,10 @@
   // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか
   // repeatEnabled ：最後の音まで進んだら、最初の音に戻ってくり返すかどうか
   // staffHeight   ：五線譜の枠の高さの上限（CSS の書き方）
+  // focusStaffHeight：動いている間の、五線譜の枠の高さの上限（CSS の書き方）（ステップE-1）
   // measureRange  ：五線譜に描く小節の範囲 { from, to }（練習する区間の小節だけを描くとき）。null なら全部（ステップD-3）
   // ontempochange ：テンポを変えたときに呼ぶ関数（新しいテンポを渡す）
+  // onrunningchange：動いているかどうかが変わったときに呼ぶ関数（true：動いている）（ステップE-1）
   // onfinish      ：最後まで進んで点数が出たときに呼ぶ関数（その回の音程の点数と、リズムの点数を渡す）（ステップD：リズムも渡す）
   let {
     score,
@@ -98,8 +106,10 @@
     allowOpenString,
     repeatEnabled,
     staffHeight,
+    focusStaffHeight = staffHeight,
     measureRange = null,
     ontempochange = () => {},
+    onrunningchange = () => {},
     onfinish = () => {},
   } = $props();
 
@@ -274,6 +284,12 @@
 
   // 動いている最中かどうか
   let isRunning = $derived(phase === "preparing" || phase === "countIn" || phase === "playing");
+
+  // 動いているかどうかが変わるたびに、練習ページに知らせる（ステップE-1）
+  // （練習ページは、動いている間、楽譜の名前や設定などを隠す）
+  $effect(() => {
+    onrunningchange(isRunning);
+  });
 
   // 判定した結果（判定しない短い音を除く）のずれ（セント）の並び
   let judgedCents = $derived(results.filter((result) => result !== undefined && result.status !== "skip").map((result) => result.cents));
@@ -898,6 +914,7 @@
 
 <!-- 五線譜：演奏中は、重ねる層に今の音の帯と結果の印を描く。終わったら、音符そのものを結果の色にする -->
 <!-- （ステップC-2：流れる縦線の目じるしと時刻も渡す） -->
+<!-- （ステップE-1：動いている間は、枠の高さの上限を、画面の高さいっぱいにする） -->
 <ImportedStaff
   {score}
   noteColors={staffColors}
@@ -906,161 +923,154 @@
   cursorKeys={timeline.cursorKeys}
   {cursorTime}
   focus={focusPosition}
-  maxHeight={staffHeight}
+  maxHeight={isRunning ? focusStaffHeight : staffHeight}
   {measureRange}
   onselect={selectNote}
 />
 
-<!-- リズムのヒントの入・切（ステップC-2）。演奏中でも切り替えられる -->
-<div class="hint-row">
-  <label class="hint-label">
-    <input type="checkbox" checked={cursorEnabled} onchange={(event) => changeCursorEnabled(event.currentTarget.checked)} />
-    流れる縦線
-  </label>
-  <label class="hint-label">
-    <input type="checkbox" checked={metronomeEnabled} onchange={(event) => changeMetronomeEnabled(event.currentTarget.checked)} />
-    メトロノーム
-  </label>
-</div>
+{#if isRunning}
+  <!-- ===== 動いている間（ステップE-1）：カウントの数字と「やめる」ボタンだけ ===== -->
+  <div class="run-bar">
+    <!-- カウントの数字（カウントの間だけ）。マイクの準備中は「準備中」 -->
+    {#if phase === "countIn"}
+      <span class="run-count" aria-label="カウントの残り">{countInRemaining}</span>
+    {:else if phase === "preparing"}
+      <span class="run-count preparing">準備中</span>
+    {/if}
+    <button class="main-button stop" onclick={stop}>■ やめる</button>
+  </div>
+{:else}
+  <!-- ===== 動いていないとき：今までどおり、全部を出す ===== -->
 
-<!-- 今の状態の表示 -->
-<div class="status-area">
-  {#if phase === "preparing"}
-    <p class="status-caption">　</p>
-    <p class="status-main idle">マイクの準備中</p>
-  {:else if phase === "countIn"}
-    <p class="status-caption">カウント</p>
-    <p class="status-main count">{countInRemaining}</p>
-  {:else if phase === "playing"}
-    <p class="status-caption">
-      {#if currentIndex !== null}
-        目標の音（{currentIndex + 1} / {timeline.items.length}）
-      {:else}
-        休み
-      {/if}
-      {#if repeatEnabled && !isPreview}
-        ・くり返し {roundScores.length + 1}回目
-      {/if}
-      <!-- お手本を聴いているときは、そのことが分かるようにする（ステップC-3） -->
-      {#if isPreview}
-        ・お手本
-      {/if}
-    </p>
-    <!-- 休符の間は「−」を出す -->
-    <p class="status-main">{currentIndex !== null ? noteToText(timeline.items[currentIndex].note) : "−"}</p>
-  {:else if phase === "finished"}
-    <!-- 点数：音程とリズムを並べて出す（ステップD） -->
-    <div class="score-pair">
-      <div class="score-box">
-        <p class="status-caption">音程</p>
-        <p class="status-main finished">{totalScore}<span class="unit">点</span></p>
-        <!-- 「名前 数」ごとに span で囲んで、途中で折り返さないようにする -->
-        <p class="status-caption small">
-          <span class="count">OK {statusCounts.ok}</span>
-          <span class="count">高い {statusCounts.high}</span>
-          <span class="count">低い {statusCounts.low}</span>
-          <span class="count">音なし {statusCounts.none}</span>
-        </p>
-      </div>
-      <div class="score-box">
-        <p class="status-caption">リズム</p>
-        <p class="status-main finished rhythm">{rhythmScore}<span class="unit">点</span></p>
-        <p class="status-caption small">
-          <span class="count">OK {rhythmCounts.ok}</span>
-          <span class="count">早い {rhythmCounts.early}</span>
-          <span class="count">遅い {rhythmCounts.late}</span>
-          <span class="count">見つからない {rhythmCounts.missing}</span>
-        </p>
-      </div>
-    </div>
-    {#if statusCounts.skip > 0 || rhythmCounts.skip > statusCounts.skip}
-      <p class="status-caption small">
-        判定しない：音程 {statusCounts.skip}・リズム {rhythmCounts.skip}
-      </p>
-    {/if}
-  {:else}
-    <p class="status-caption">「始める」を押すと、カウントが{countInBeats}拍鳴ります</p>
-    <p class="status-main idle">♩＝{tempo}</p>
-    <!-- 今のテンポで短すぎて判定しない音があるときは、その数を知らせる -->
-    {#if skipCount > 0}
-      <p class="status-caption">このテンポでは、短い音 {skipCount}音は判定しません（灰色）</p>
-    {/if}
-  {/if}
-</div>
+  <!-- リズムのヒントの入・切（ステップC-2） -->
+  <!-- （ステップE-1：動いている間は隠すので、演奏中には切り替えられなくなった） -->
+  <div class="hint-row">
+    <label class="hint-label">
+      <input type="checkbox" checked={cursorEnabled} onchange={(event) => changeCursorEnabled(event.currentTarget.checked)} />
+      流れる縦線
+    </label>
+    <label class="hint-label">
+      <input type="checkbox" checked={metronomeEnabled} onchange={(event) => changeMetronomeEnabled(event.currentTarget.checked)} />
+      メトロノーム
+    </label>
+  </div>
 
-<!-- タップして選んだ音の結果（演奏していないときだけ） -->
-{#if selectedIndex !== null && results[selectedIndex] !== undefined && !isRunning}
-  {@const item = timeline.items[selectedIndex]}
-  {@const result = results[selectedIndex]}
-  <p class="selected-result {result.status}">
-    {measureName(score, item.positions[0].measure)}・{noteToText(item.note)}：{STATUS_LABELS[result.status]}
-    {#if result.cents !== null}
-      {formatCents(result.cents)}セント・{centsToPoints(result.cents)}点
+  <!-- 今の状態の表示（ステップE-1：動いている間の表示は、上の run-bar に移した。ここは、終わったあとと、始める前だけ） -->
+  <div class="status-area">
+    {#if phase === "finished"}
+      <!-- 点数：音程とリズムを並べて出す（ステップD） -->
+      <div class="score-pair">
+        <div class="score-box">
+          <p class="status-caption">音程</p>
+          <p class="status-main finished">{totalScore}<span class="unit">点</span></p>
+          <!-- 「名前 数」ごとに span で囲んで、途中で折り返さないようにする -->
+          <p class="status-caption small">
+            <span class="count">OK {statusCounts.ok}</span>
+            <span class="count">高い {statusCounts.high}</span>
+            <span class="count">低い {statusCounts.low}</span>
+            <span class="count">音なし {statusCounts.none}</span>
+          </p>
+        </div>
+        <div class="score-box">
+          <p class="status-caption">リズム</p>
+          <p class="status-main finished rhythm">{rhythmScore}<span class="unit">点</span></p>
+          <p class="status-caption small">
+            <span class="count">OK {rhythmCounts.ok}</span>
+            <span class="count">早い {rhythmCounts.early}</span>
+            <span class="count">遅い {rhythmCounts.late}</span>
+            <span class="count">見つからない {rhythmCounts.missing}</span>
+          </p>
+        </div>
+      </div>
+      {#if statusCounts.skip > 0 || rhythmCounts.skip > statusCounts.skip}
+        <p class="status-caption small">
+          判定しない：音程 {statusCounts.skip}・リズム {rhythmCounts.skip}
+        </p>
+      {/if}
+    {:else}
+      <p class="status-caption">「始める」を押すと、カウントが{countInBeats}拍鳴ります</p>
+      <p class="status-main idle">♩＝{tempo}</p>
+      <!-- 今のテンポで短すぎて判定しない音があるときは、その数を知らせる -->
+      {#if skipCount > 0}
+        <p class="status-caption">このテンポでは、短い音 {skipCount}音は判定しません（灰色）</p>
+      {/if}
     {/if}
-    {#if result.openString === true}
-      （開放弦）
-    {/if}
-    <!-- リズムの結果（ステップD） -->
-    {#if rhythmResults[selectedIndex] !== undefined}
-      {@const rhythm = rhythmResults[selectedIndex]}
-      <br />
-      リズム：
-      {#if rhythm.status === "skip"}
-        判定しない
-      {:else}
-        {RHYTHM_STYLES[rhythm.status].label}
-        {#if rhythm.seconds !== null}
-          {rhythm.seconds >= 0 ? "+" : "−"}{Math.abs(rhythm.seconds).toFixed(2)}秒・{secondsToPoints(rhythm.seconds)}点
+  </div>
+
+  <!-- タップして選んだ音の結果 -->
+  {#if selectedIndex !== null && results[selectedIndex] !== undefined}
+    {@const item = timeline.items[selectedIndex]}
+    {@const result = results[selectedIndex]}
+    <p class="selected-result {result.status}">
+      {measureName(score, item.positions[0].measure)}・{noteToText(item.note)}：{STATUS_LABELS[result.status]}
+      {#if result.cents !== null}
+        {formatCents(result.cents)}セント・{centsToPoints(result.cents)}点
+      {/if}
+      {#if result.openString === true}
+        （開放弦）
+      {/if}
+      <!-- リズムの結果（ステップD） -->
+      {#if rhythmResults[selectedIndex] !== undefined}
+        {@const rhythm = rhythmResults[selectedIndex]}
+        <br />
+        リズム：
+        {#if rhythm.status === "skip"}
+          判定しない
+        {:else}
+          {RHYTHM_STYLES[rhythm.status].label}
+          {#if rhythm.seconds !== null}
+            {rhythm.seconds >= 0 ? "+" : "−"}{Math.abs(rhythm.seconds).toFixed(2)}秒・{secondsToPoints(rhythm.seconds)}点
+          {/if}
         {/if}
       {/if}
-    {/if}
-  </p>
-{:else if phase === "finished"}
-  <p class="hint">音符をタップすると、その音の結果が見られます</p>
-{/if}
+    </p>
+  {:else if phase === "finished"}
+    <p class="hint">音符をタップすると、その音の結果が見られます</p>
+  {/if}
 
-<!-- くり返しの、回ごとの点数 -->
-{#if roundScores.length > 0}
-  <ul class="round-list">
-    {#each roundScores as roundScore, index}
-      <!-- ステップD：音程とリズムの点数を並べる -->
-      <li class="round">{index + 1}回目 音程 <strong>{roundScore.pitch}点</strong>・リズム <strong>{roundScore.rhythm}点</strong></li>
-    {/each}
-  </ul>
-{/if}
+  <!-- くり返しの、回ごとの点数 -->
+  {#if roundScores.length > 0}
+    <ul class="round-list">
+      {#each roundScores as roundScore, index}
+        <!-- ステップD：音程とリズムの点数を並べる -->
+        <li class="round">{index + 1}回目 音程 <strong>{roundScore.pitch}点</strong>・リズム <strong>{roundScore.rhythm}点</strong></li>
+      {/each}
+    </ul>
+  {/if}
 
-<!-- エラーメッセージ -->
-{#if errorMessage !== ""}
-  <p class="error">{errorMessage}</p>
-{/if}
+  <!-- エラーメッセージ -->
+  {#if errorMessage !== ""}
+    <p class="error">{errorMessage}</p>
+  {/if}
 
-<!-- テンポの指定と、始める・やめるのボタン -->
-<div class="control-row">
-  <span class="tempo-text">♩＝{tempo}</span>
-  <button class="tempo-button" aria-label="テンポを遅くする" disabled={isRunning || tempo <= TEMPO_MIN} onclick={() => changeTempo(-TEMPO_STEP)}> − </button>
-  <button class="tempo-button" aria-label="テンポを速くする" disabled={isRunning || tempo >= TEMPO_MAX} onclick={() => changeTempo(TEMPO_STEP)}> ＋ </button>
-  {#if isRunning}
-    <button class="main-button stop" onclick={stop}>■ やめる</button>
-  {:else}
+  <!-- 横向きがおすすめの案内（ステップE-1） -->
+  <!-- スマホを縦向きにしているときだけ出す（下の style の @media で、縦向きで幅の狭い画面のときだけ表示する） -->
+  <p class="orientation-hint">📱 スマホは横向きにすると、楽譜が広く見えて弾きやすくなります</p>
+
+  <!-- テンポの指定と、始めるボタン（ステップE-1：「やめる」ボタンは、上の run-bar に移した） -->
+  <div class="control-row">
+    <span class="tempo-text">♩＝{tempo}</span>
+    <button class="tempo-button" aria-label="テンポを遅くする" disabled={tempo <= TEMPO_MIN} onclick={() => changeTempo(-TEMPO_STEP)}> − </button>
+    <button class="tempo-button" aria-label="テンポを速くする" disabled={tempo >= TEMPO_MAX} onclick={() => changeTempo(TEMPO_STEP)}> ＋ </button>
     <button class="main-button start" onclick={start}>
       {phase === "finished" ? "▶ もう一度" : "▶ 始める"}
     </button>
-  {/if}
-</div>
-
-<!-- お手本を聴くボタン（ステップC-3）。動いている最中は押せない -->
-<button class="preview-button" disabled={isRunning} onclick={startPreview}>♪ お手本を聴く</button>
-
-<!-- 設定：ふだんは閉じておき、「設定」を押すと開く -->
-<details class="settings">
-  <summary>設定</summary>
-  <div class="setting-row">
-    <span class="setting-label">カウントの拍の数</span>
-    <span class="setting-value">{countInBeats}</span>
-    <button class="tempo-button" aria-label="カウントの拍の数を減らす" disabled={isRunning || countInBeats <= COUNT_IN_MIN} onclick={() => changeCountIn(-1)}> − </button>
-    <button class="tempo-button" aria-label="カウントの拍の数を増やす" disabled={isRunning || countInBeats >= COUNT_IN_MAX} onclick={() => changeCountIn(1)}> ＋ </button>
   </div>
-</details>
+
+  <!-- お手本を聴くボタン（ステップC-3） -->
+  <button class="preview-button" onclick={startPreview}>♪ お手本を聴く</button>
+
+  <!-- 設定：ふだんは閉じておき、「設定」を押すと開く -->
+  <details class="settings">
+    <summary>設定</summary>
+    <div class="setting-row">
+      <span class="setting-label">カウントの拍の数</span>
+      <span class="setting-value">{countInBeats}</span>
+      <button class="tempo-button" aria-label="カウントの拍の数を減らす" disabled={countInBeats <= COUNT_IN_MIN} onclick={() => changeCountIn(-1)}> − </button>
+      <button class="tempo-button" aria-label="カウントの拍の数を増やす" disabled={countInBeats >= COUNT_IN_MAX} onclick={() => changeCountIn(1)}> ＋ </button>
+    </div>
+  </details>
+{/if}
 
 <style>
   /* リズムのヒントの入・切の行：チェックボックスを横に並べる（ステップC-2） */
@@ -1137,11 +1147,6 @@
     white-space: nowrap;
   }
 
-  /* カウントの数字：グレー */
-  .status-main.count {
-    color: #616161;
-  }
-
   /* 点数の文字：緑 */
   .status-main.finished {
     color: #2e7d32;
@@ -1206,6 +1211,48 @@
   .error {
     margin: 12px 0 0 0;
     color: #c62828;
+  }
+
+  /* ===== 動いている間の、カウントの数字と「やめる」ボタンの行（ステップE-1） ===== */
+  .run-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  /* カウントの数字：グレーの太字。ボタンと同じ高さに収める */
+  .run-count {
+    min-width: 2em;
+    font-size: 2.2rem;
+    font-weight: bold;
+    line-height: 44px;
+    text-align: center;
+    color: #616161;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 「準備中」の文字：数字より小さく */
+  .run-count.preparing {
+    font-size: 1rem;
+  }
+
+  /* 横向きがおすすめの案内（ステップE-1）：ふだんは隠しておく */
+  .orientation-hint {
+    display: none;
+    margin: 12px 0 0 0;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    color: #e65100;
+    background-color: #fff3e0;
+    border-radius: 8px;
+  }
+
+  /* 縦向きで、幅の狭い画面（スマホの縦向き）のときだけ、案内を出す */
+  @media (orientation: portrait) and (max-width: 600px) {
+    .orientation-hint {
+      display: block;
+    }
   }
 
   /* テンポの表示・テンポのボタン・始めるボタンを横に並べる */

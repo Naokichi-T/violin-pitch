@@ -440,10 +440,13 @@ export function getImportedScore(id) {
  * 読み込んだ楽譜を、五線譜に描くための形（楽譜作成アプリの楽譜データの形）に直す関数（ステップA-2）
  * 選んだパートを、1つだけのパートとして入れる。
  * タイトルと作曲者は空にする（練習ページでは、名前を五線譜の外に出すため。空にするとタイトルの場所を取らない）。
+ * （ステップE-1：showSymbols が false のときは、弓の記号と指番号を取り除いた写しを入れる。
+ *   保存してある楽譜そのものは書き換えない）
  * @param {object} record - 読み込んだ楽譜
+ * @param {boolean} [showSymbols=true] - 弓の記号と指番号を描くかどうか（省略したら描く）
  * @returns {object} 楽譜作成アプリの形の楽譜データ（パートは1つ）
  */
-export function toRenderScore(record) {
+export function toRenderScore(record, showSymbols = true) {
   return {
     title: "",
     composer: "",
@@ -456,10 +459,29 @@ export function toRenderScore(record) {
         name: record.partName,
         abbreviation: record.partName,
         instrument: record.instrument,
-        measures: record.partMeasures,
+        measures: showSymbols ? record.partMeasures : removeBowingAndFingerings(record.partMeasures),
       },
     ],
   };
+}
+
+/**
+ * 小節の並びから、弓の記号（bowing）と指番号（fingerings）を取り除いた写しを作る関数（ステップE-1）
+ * 元の小節・音符は書き換えない（音符ごとに写しを作って、その写しから消す）。
+ * @param {object[]} partMeasures - 選んだパートの小節（読み込んだ楽譜の partMeasures）
+ * @returns {object[]} 弓の記号と指番号のない小節の並び
+ */
+function removeBowingAndFingerings(partMeasures) {
+  return partMeasures.map((measure) => ({
+    ...measure,
+    notes: measure.notes.map((note) => {
+      // 「...」で写しを作り、写しのほうから2つの項目を消す
+      const copy = { ...note };
+      delete copy.bowing;
+      delete copy.fingerings;
+      return copy;
+    }),
+  }));
 }
 
 /**

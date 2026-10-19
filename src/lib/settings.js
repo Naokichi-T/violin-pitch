@@ -512,3 +512,34 @@ export function saveRunMetronomeEnabled(enabled) {
     // 保存領域を使えないときは、何もしない
   }
 }
+
+// ===== 読み込んだ楽譜の、弓の記号と指番号の表示（ステップE-1） =====
+
+// 弓の記号と指番号を表示するかどうかを保存するときの名前（キー）
+const IMPORTED_SYMBOLS_VISIBLE_KEY = "violin-pitch:importedSymbolsVisible";
+
+/**
+ * 保存しておいた「弓の記号と指番号を表示する」の入・切を読み込む関数（ステップE-1）
+ * @returns {boolean} true：表示する、false：表示しない。保存していないときは true（最初は表示する）
+ */
+export function loadImportedSymbolsVisible() {
+  try {
+    // 「false」と保存してあるときだけ表示しない。保存していないときや、それ以外の内容のときは表示する
+    return localStorage.getItem(IMPORTED_SYMBOLS_VISIBLE_KEY) !== "false";
+  } catch (error) {
+    // 保存領域を使えないときは、最初の設定（表示する）
+    return true;
+  }
+}
+
+/**
+ * 「弓の記号と指番号を表示する」の入・切をブラウザに保存する関数（ステップE-1）
+ * @param {boolean} visible - true：表示する、false：表示しない
+ */
+export function saveImportedSymbolsVisible(visible) {
+  try {
+    localStorage.setItem(IMPORTED_SYMBOLS_VISIBLE_KEY, String(visible));
+  } catch (error) {
+    // 保存領域を使えないときは、何もしない（次に開いたときは最初の設定になる）
+  }
+}

@@ -9,9 +9,13 @@
   // （ステップC-1：「通し」を足した。お手本の時刻表どおりに進んで、音程を判定する。音程の最高点を記録する。
   //   選んだモードは、手入力の楽譜の練習ページと共通の設定として保存する）
   // （ステップD：リズムの判定を足したので、リズムの OK の幅を渡し、リズムの最高点も記録・表示する）
+  // （ステップE-1：「通し」が動いている間は、楽譜の名前・最高点・設定などを隠して、楽譜を広く見せる。
+  //   弓の記号と指番号を表示するかどうかを、チェックで切り替えられるようにした（共通の設定として保存する））
+
+  // tick：画面の書き換えが終わるのを待つための仕組み（「通し」を始めたときに、いちばん上へスクロールするのに使う）
 
   // onMount：このページが画面に表示された直後に処理をするための仕組み
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
 
   // 読み込んだ楽譜を id で探す関数・五線譜に描く形にする関数・灰色にする音符の表を作る関数と、
   // 判定する音の並びを作る関数・くり返しがあるかを調べる関数・音符の場所から番号を探す関数・区間を決める関数を読み込む
@@ -29,7 +33,8 @@
   // 判定のレベル・開放弦の設定を、ブラウザから読み込む関数と、ブラウザに保存する関数を読み込む
   // （手入力の楽譜の練習ページと同じ保存場所なので、どちらで変えても同じ設定になる）
   // （ステップC-1：練習のモードも、共通の設定として読み込む・保存する）
-  import { loadLevelId, saveLevelId, loadOpenStringEnabled, saveOpenStringEnabled, loadModeId, saveModeId } from "#lib/settings.js";
+  // （ステップE-1：弓の記号と指番号の表示も、読み込む・保存する）
+  import { loadLevelId, saveLevelId, loadOpenStringEnabled, saveOpenStringEnabled, loadModeId, saveModeId, loadImportedSymbolsVisible, saveImportedSymbolsVisible } from "#lib/settings.js";
 
   // 判定のレベルの一覧と、レベルのデータを探す関数を読み込む
   import { LEVELS, DEFAULT_LEVEL_ID, getLevel } from "#lib/level.js";
@@ -74,6 +79,12 @@
   // 区間を選ぶときの、五線譜の枠の高さの上限（選ぶときは楽譜を広く見たいので、少し高くする）
   const STAFF_HEIGHT_RANGE = "max(60vh, 260px)";
 
+  // 「通し」が動いている間の、五線譜の枠の高さの上限（ステップE-1）
+  // 画面の高さ（100dvh）から、ページの上下の余白・五線譜の枠の余白・「やめる」ボタンの行のぶん（約100px）を引いた高さ
+  // （dvh は、スマホのアドレスバーが出たり引っこんだりしても、実際に見えている高さになる単位。
+  //   狭すぎる画面でも小さくなりすぎないように、160px より低くはしない）
+  const STAFF_HEIGHT_RUNNING = "max(calc(100dvh - 100px), 160px)";
+
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
   // 開いている楽譜（読み込んだ楽譜）。見つかるまでは null
@@ -101,6 +112,12 @@
 
   // 「開放弦の高さで弾いた音もOKにする」設定（true：する）
   let openStringEnabled = $state(true);
+
+  // 弓の記号と指番号を表示するかどうか（true：表示する）（ステップE-1）
+  let symbolsVisible = $state(true);
+
+  // 「通し」が動いている最中かどうか（true：動いている。楽譜の名前・設定などを隠す）（ステップE-1）
+  let isRunFocus = $state(false);
 
   // 開放弦の設定の説明を表示しているかどうか（true：表示している）。「？」ボタンで切り替える
   let showsOpenStringHelp = $state(false);
@@ -210,6 +227,7 @@
     levelId = loadLevelId();
     openStringEnabled = loadOpenStringEnabled();
     modeId = loadModeId(); // ステップC-1
+    symbolsVisible = loadImportedSymbolsVisible(); // ステップE-1
 
     // URL の「?id=○○」の部分を取り出す（なければ null）
     const id = new URL(location.href).searchParams.get("id");
@@ -218,7 +236,7 @@
       const found = getImportedScore(id);
       if (found !== null) {
         record = found;
-        renderScoreData = toRenderScore(found);
+        renderScoreData = toRenderScore(found, symbolsVisible); // ステップE-1：弓の記号と指番号を描くかどうかも渡す
         excludedColors = getExcludedNoteColors(found.partMeasures);
         allTargets = buildTargets(found, true); // 全体の練習は、くり返しを展開した順
         repeatsExist = hasRepeats(found);
@@ -351,6 +369,31 @@
   }
 
   /**
+   * 「弓の記号と指番号を表示する」設定を切り替える関数（ステップE-1）
+   * チェックボックスを押したときに呼ばれる。設定をブラウザに保存して、五線譜に描く形の楽譜を作り直す（→ 五線譜が描き直される）。
+   * @param {boolean} visible - チェックが入っているかどうか（true：表示する）
+   */
+  function changeSymbolsVisible(visible) {
+    symbolsVisible = visible;
+    saveImportedSymbolsVisible(visible);
+    renderScoreData = toRenderScore(record, visible);
+  }
+
+  /**
+   * 「通し」が動きはじめたとき・止まったときに呼ばれる関数（ステップE-1）
+   * 動いている間は、楽譜の名前・設定などを隠す。動きはじめたら、ページのいちばん上へスクロールして、楽譜が見えるようにする。
+   * @param {boolean} running - 動いているかどうか（true：動いている）
+   */
+  async function handleRunningChange(running) {
+    isRunFocus = running;
+    if (running) {
+      // 隠したものが画面から消えるのを待ってから、いちばん上へスクロールする
+      await tick();
+      window.scrollTo({ top: 0 });
+    }
+  }
+
+  /**
    * 区間を選びはじめる関数（ステップB）
    * 区間の「変更」ボタンを押したときに呼ばれる。練習の部品の代わりに楽譜の全体を表示して、音符をタップできるようにする。
    */
@@ -449,10 +492,12 @@
 {/snippet}
 
 <main>
-  <!-- 画面の上の行：一覧へ戻るリンク -->
-  <div class="header-row">
-    <a class="back-link" href="/imported">← 読み込んだ楽譜</a>
-  </div>
+  <!-- 画面の上の行：一覧へ戻るリンク（ステップE-1：「通し」が動いている間は隠す） -->
+  {#if !isRunFocus}
+    <div class="header-row">
+      <a class="back-link" href="/imported">← 読み込んだ楽譜</a>
+    </div>
+  {/if}
 
   {#if !isLoaded}
     <!-- 楽譜を探すまでの、ごく短い間の表示 -->
@@ -462,107 +507,116 @@
     <p class="message">楽譜が見つかりませんでした。一覧から開き直してください。</p>
     <a class="link-button" href="/imported">読み込んだ楽譜の一覧へ</a>
   {:else}
-    <!-- 楽譜の情報 -->
-    <h1>{record.name}</h1>
-    <div class="score-info-row">
-      <p class="detail">
-        {record.partName}・{getKeyLabel(currentKey)}・♩＝{record.tempo}・{getTemperament(record.temperamentId).name}
-      </p>
-      <!-- 指板の図へのリンク。アドレスの最後に「?key=調の id」を付けて、楽譜の調を引き継ぐ（ステップB） -->
-      <a class="fingerboard-link" href="/fingerboard?key={record.keyId}">指板で見る →</a>
-    </div>
-
-    <!-- 音程の最高点（ステップC-1）：記録があるとき・区間を指定しているときに出す -->
-    <!-- （ステップD：リズムの最高点も並べる） -->
-    {#if bestPitchScore !== null || bestRhythmScore !== null || rangeStart !== null}
-      <p class="best-row">
-        {#if bestPitchScore !== null}
-          最高点 音程 <strong>{bestPitchScore}点</strong>
-          {#if isNewRecord}
-            <span class="new-record">更新！</span>
-          {/if}
-        {/if}
-        {#if bestRhythmScore !== null}
-          <span class="best-item">リズム <strong class="rhythm">{bestRhythmScore}点</strong></span>
-          {#if isNewRhythmRecord}
-            <span class="new-record">更新！</span>
-          {/if}
-        {/if}
-        {#if rangeStart !== null}
-          <span class="record-note">区間を指定しているときは、記録されません</span>
-        {/if}
-      </p>
-    {/if}
-
-    <!-- 灰色の音の説明（灰色の音があるときだけ出す） -->
-    {#if excludedColors.size > 0}
-      <p class="note">灰色の音は、判定しない音です（音域の外の音・トリルなどの装飾の付いた音など）。</p>
-    {/if}
-
-    <!-- ===== 設定（ステップB。手入力の楽譜の練習ページと同じ並び） ===== -->
-
-    <!-- 練習する区間：今の区間の説明と、「変更」「全体に戻す」のボタンを横に並べる -->
-    <div class="range-row">
-      <span class="range-caption">区間</span>
-      <span class="range-text">{rangeText}</span>
-
-      <!-- 「全体に戻す」ボタン：区間を決めているときだけ表示する -->
-      {#if rangeStart !== null}
-        <button class="range-button" disabled={isSelectingRange} onclick={clearRange}> 全体に戻す </button>
-      {/if}
-
-      <!-- 「変更」ボタン：区間を選びはじめる（選んでいる最中は押せない） -->
-      <button class="range-button" disabled={isSelectingRange} onclick={openRangeSelector}> 変更 </button>
-    </div>
-
-    <!-- くり返しの設定 -->
-    <!-- bind:checked を付けると、チェックの状態と repeatEnabled の値が、いつも同じになる -->
-    <label class="repeat-row">
-      <input type="checkbox" bind:checked={repeatEnabled} />
-      くり返す（最後の音まで行ったら、最初の音に戻る）
-    </label>
-
-    <!-- 練習のモードの切り替え：名前と短い説明を付けたボタンを横に並べる（ステップC-1：「通し」も選べるようにした） -->
-    <div class="mode-row">
-      {#each MODES as mode (mode.id)}
-        <button class="mode-button" class:selected={modeId === mode.id} onclick={() => changeMode(mode.id)}>
-          <span class="mode-name">{mode.name}</span>
-          <span class="mode-description">{mode.description}</span>
-        </button>
-      {/each}
-    </div>
-
-    <!-- 判定のレベルの切り替え（ノーマル・イージー） -->
-    <div class="level-row">
-      <span class="level-caption">判定</span>
-      {#each LEVELS as level (level.id)}
-        <button class="level-button" class:selected={levelId === level.id} onclick={() => changeLevel(level.id)}>
-          {level.name}（±{level.tolerance}）
-        </button>
-      {/each}
-    </div>
-
-    <!-- 開放弦の設定：純正律のときだけ表示する -->
-    {#if showsOpenStringSetting}
-      <div class="open-string-row">
-        <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
-        <label class="open-string-label">
-          <input type="checkbox" checked={openStringEnabled} onchange={(event) => changeOpenStringEnabled(event.currentTarget.checked)} />
-          開放弦の高さで弾いた音もOKにする（ソ3・レ4・ラ4・ミ5）
-        </label>
-
-        <!-- 「？」ボタン：押すたびに、説明を表示する・隠すを切り替える -->
-        <button class="help-button" aria-label="開放弦の設定の説明" aria-expanded={showsOpenStringHelp} onclick={() => (showsOpenStringHelp = !showsOpenStringHelp)}> ？ </button>
+    <!-- ===== 楽譜の情報と設定（ステップE-1：「通し」が動いている間は、まとめて隠す） ===== -->
+    {#if !isRunFocus}
+      <!-- 楽譜の情報 -->
+      <h1>{record.name}</h1>
+      <div class="score-info-row">
+        <p class="detail">
+          {record.partName}・{getKeyLabel(currentKey)}・♩＝{record.tempo}・{getTemperament(record.temperamentId).name}
+        </p>
+        <!-- 指板の図へのリンク。アドレスの最後に「?key=調の id」を付けて、楽譜の調を引き継ぐ（ステップB） -->
+        <a class="fingerboard-link" href="/fingerboard?key={record.keyId}">指板で見る →</a>
       </div>
 
-      <!-- 説明：「？」ボタンを押して、表示にしているときだけ出す -->
-      {#if showsOpenStringHelp}
-        <p class="help-text">
-          開放弦（指で押さえない弦）は、調弦で高さが決まっていて、弾きながら変えられません。<br />
-          純正律では、調によって、ソ3・レ4・ラ4・ミ5 の「正しい高さ」が開放弦の高さと少し違うことがあります（最大で約22セント）。<br />
-          チェックを入れると、この4つの音は、開放弦の高さで弾いても正解になります。隣の弦で純正律の高さで弾いても、もちろん正解です。
+      <!-- 音程の最高点（ステップC-1）：記録があるとき・区間を指定しているときに出す -->
+      <!-- （ステップD：リズムの最高点も並べる） -->
+      {#if bestPitchScore !== null || bestRhythmScore !== null || rangeStart !== null}
+        <p class="best-row">
+          {#if bestPitchScore !== null}
+            最高点 音程 <strong>{bestPitchScore}点</strong>
+            {#if isNewRecord}
+              <span class="new-record">更新！</span>
+            {/if}
+          {/if}
+          {#if bestRhythmScore !== null}
+            <span class="best-item">リズム <strong class="rhythm">{bestRhythmScore}点</strong></span>
+            {#if isNewRhythmRecord}
+              <span class="new-record">更新！</span>
+            {/if}
+          {/if}
+          {#if rangeStart !== null}
+            <span class="record-note">区間を指定しているときは、記録されません</span>
+          {/if}
         </p>
       {/if}
+
+      <!-- 灰色の音の説明（灰色の音があるときだけ出す） -->
+      {#if excludedColors.size > 0}
+        <p class="note">灰色の音は、判定しない音です（音域の外の音・トリルなどの装飾の付いた音など）。</p>
+      {/if}
+
+      <!-- ===== 設定（ステップB。手入力の楽譜の練習ページと同じ並び） ===== -->
+
+      <!-- 練習する区間：今の区間の説明と、「変更」「全体に戻す」のボタンを横に並べる -->
+      <div class="range-row">
+        <span class="range-caption">区間</span>
+        <span class="range-text">{rangeText}</span>
+
+        <!-- 「全体に戻す」ボタン：区間を決めているときだけ表示する -->
+        {#if rangeStart !== null}
+          <button class="range-button" disabled={isSelectingRange} onclick={clearRange}> 全体に戻す </button>
+        {/if}
+
+        <!-- 「変更」ボタン：区間を選びはじめる（選んでいる最中は押せない） -->
+        <button class="range-button" disabled={isSelectingRange} onclick={openRangeSelector}> 変更 </button>
+      </div>
+
+      <!-- くり返しの設定 -->
+      <!-- bind:checked を付けると、チェックの状態と repeatEnabled の値が、いつも同じになる -->
+      <label class="repeat-row">
+        <input type="checkbox" bind:checked={repeatEnabled} />
+        くり返す（最後の音まで行ったら、最初の音に戻る）
+      </label>
+
+      <!-- 練習のモードの切り替え：名前と短い説明を付けたボタンを横に並べる（ステップC-1：「通し」も選べるようにした） -->
+      <div class="mode-row">
+        {#each MODES as mode (mode.id)}
+          <button class="mode-button" class:selected={modeId === mode.id} onclick={() => changeMode(mode.id)}>
+            <span class="mode-name">{mode.name}</span>
+            <span class="mode-description">{mode.description}</span>
+          </button>
+        {/each}
+      </div>
+
+      <!-- 判定のレベルの切り替え（ノーマル・イージー） -->
+      <div class="level-row">
+        <span class="level-caption">判定</span>
+        {#each LEVELS as level (level.id)}
+          <button class="level-button" class:selected={levelId === level.id} onclick={() => changeLevel(level.id)}>
+            {level.name}（±{level.tolerance}）
+          </button>
+        {/each}
+      </div>
+
+      <!-- 開放弦の設定：純正律のときだけ表示する -->
+      {#if showsOpenStringSetting}
+        <div class="open-string-row">
+          <!-- label で囲むと、文字の部分を押してもチェックを切り替えられる -->
+          <label class="open-string-label">
+            <input type="checkbox" checked={openStringEnabled} onchange={(event) => changeOpenStringEnabled(event.currentTarget.checked)} />
+            開放弦の高さで弾いた音もOKにする（ソ3・レ4・ラ4・ミ5）
+          </label>
+
+          <!-- 「？」ボタン：押すたびに、説明を表示する・隠すを切り替える -->
+          <button class="help-button" aria-label="開放弦の設定の説明" aria-expanded={showsOpenStringHelp} onclick={() => (showsOpenStringHelp = !showsOpenStringHelp)}> ？ </button>
+        </div>
+
+        <!-- 説明：「？」ボタンを押して、表示にしているときだけ出す -->
+        {#if showsOpenStringHelp}
+          <p class="help-text">
+            開放弦（指で押さえない弦）は、調弦で高さが決まっていて、弾きながら変えられません。<br />
+            純正律では、調によって、ソ3・レ4・ラ4・ミ5 の「正しい高さ」が開放弦の高さと少し違うことがあります（最大で約22セント）。<br />
+            チェックを入れると、この4つの音は、開放弦の高さで弾いても正解になります。隣の弦で純正律の高さで弾いても、もちろん正解です。
+          </p>
+        {/if}
+      {/if}
+
+      <!-- 弓の記号と指番号を表示するかどうか（ステップE-1）。「じっくり」「通し」「区間を選ぶ画面」のすべてに効く -->
+      <label class="repeat-row">
+        <input type="checkbox" checked={symbolsVisible} onchange={(event) => changeSymbolsVisible(event.currentTarget.checked)} />
+        弓の記号と指番号を表示する
+      </label>
     {/if}
 
     {#if isSelectingRange}
@@ -600,7 +654,8 @@
       <!-- ===== 練習の部品（ステップB：「じっくり」、ステップC-1：「通し」） ===== -->
       <!-- key で囲むと、rangeKey（区間の目印）が変わったときに、中の部品が作り直される（最初の音からやり直す） -->
       <!-- モードを切り替えると、前のモードの部品は画面から消え、マイクも自動で止まる -->
-      <div class="practice-area">
+      <!-- （ステップE-1：「通し」が動いている間は、上の間をあけない） -->
+      <div class="practice-area" class:focused={isRunFocus}>
         {#key rangeKey}
           {#if modeId === "run"}
             <!-- 「通し」：時刻表を作る関数・テンポ・最高点を記録する関数などを渡す -->
@@ -616,8 +671,10 @@
               {allowOpenString}
               {repeatEnabled}
               staffHeight={STAFF_HEIGHT_PRACTICE}
+              focusStaffHeight={STAFF_HEIGHT_RUNNING}
               measureRange={displayRange}
               ontempochange={(value) => (runTempo = value)}
+              onrunningchange={handleRunningChange}
               onfinish={handleRunFinish}
             />
           {:else}
@@ -913,6 +970,11 @@
   /* 練習の部品のエリア：上に少し間をあける */
   .practice-area {
     margin-top: 12px;
+  }
+
+  /* 「通し」が動いている間：上に何もないので、間をあけない（ステップE-1） */
+  .practice-area.focused {
+    margin-top: 0;
   }
 
   /* 「読み込み中」「見つかりませんでした」などのメッセージ */
