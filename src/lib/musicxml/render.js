@@ -73,6 +73,7 @@ const FLOW_LEAD_PLAIN = 7; // 臨時記号のない音符・休符
 const FLOW_LEAD_ACCIDENTAL = 18; // 臨時記号の付いた音符（臨時記号が入る幅）
 const FLOW_LEAD_GRACE = 26; // 前打音の付いた音符（前打音が入る幅）
 const FLOW_BAR_GAP = 3; // 小節線（記号のない小節の頭）から、音符を並べ始める所までの間
+const FLOW_BAR_CLEAR = 6; // 小節の最後の音符の右端と、小節線の間に、少なくとも空ける幅
 const FLOW_END_PADDING = 24; // 最後の小節の、最後の音符のうしろに空ける幅
 const FLOW_MIN_NOTE_ABSOLUTE = 28; // 幅をどれだけ狭くしても、よく出てくる短い音符に取る幅の最小（小節線や音符が重ならないように）
 const FLOW_MIN_NOTE_WIDTH = 44; // いちばん短い音符（休符も）に、少なくとも取る幅（♯・付点が重ならないように）
@@ -229,16 +230,18 @@ export function renderScore(VF, container, score, width, selection = null, range
 
   // 【音程チェックアプリ（ステップE-2）】流れるモード：小節ごとの「小節線から1つ目の音符まで」の並べ方
   // lead … 音符を並べ始める所から、1つ目の音符の玉までの間（臨時記号・前打音があると広い）
-  // pad  … 小節線から、音符を並べ始める所までの間（記号のない小節は FLOW_BAR_GAP に詰める。null なら VexFlow の決めたまま）
+  // pad  … 小節線から、音符を並べ始める所までの間（記号のない小節は FLOW_BAR_GAP に詰める。記号のある小節は、記号の幅）
   const flowLeads = [];
   const flowPads = [];
   if (flowPxPerTick !== null) {
     for (let i = 0; i < measureCount; i++) {
       flowLeads.push(flowLead(score, accidentalsList, i));
-      // 記号（拍子・調・音部記号・くり返しの始まり）のある小節と、帯の最初の小節は、VexFlow の決めた幅のまま
+      // 記号（拍子・調・音部記号・くり返しの始まり）のある小節と、帯の最初の小節は、記号の幅を実際に測る
+      // （実際に描くときと同じ記号を付けた五線で測る。前は、くり返しの始まりの線などの幅が入っておらず、
+      //   音符がその分だけ右へ押し出されて、小節の最後の音符が小節線より右に出てしまうことがあった）
       const state = states[i];
       const hasSigns = i === first || state.timeChanged || state.keyChanged || state.clefChanged.some((changed) => changed) || !!score.measures[i].repeatStart;
-      flowPads.push(hasSigns ? null : FLOW_BAR_GAP);
+      flowPads.push(hasSigns ? flowSignWidth(VF, state, score.measures[i], partCount, i === first) : FLOW_BAR_GAP);
     }
   }
 
@@ -250,17 +253,34 @@ export function renderScore(VF, container, score, width, selection = null, range
     //   小節の幅     ＝ 次の小節の小節線の位置 − この小節の小節線の位置
     // （前は、小節の幅を「記号の幅 ＋ 小節の長さ」にしていたので、幅を狭くすると、
     //   小節線が小節の最後の音符より左に来てしまっていた）
+    // （ステップE-2：小節の最後の音符が短いと、時間どおりの位置では、その音符の玉や旗が次の小節線にかかってしまう。
+    //   そのときだけ、小節線（とそれより後ろ全部）を、最後の音符の右端より右までずらす）
     const measures = [];
     const barXs = []; // 小節ごとの、小節線（五線の左端）の位置（帯の最初の音符の位置を 0 とした値）
     let headX = 0; // 小節の1つ目の音符の位置（帯の最初の音符を 0 とする）
+    let previousRight = -Infinity; // 前の小節の、最後の音符の右端
     for (let i = first; i <= last; i++) {
-      const pad = flowPads[i] ?? middleWidths[i];
+      const pad = flowPads[i];
       measures.push(i);
-      barXs.push(headX - flowLeads[i] - pad);
+      // 小節線の位置：時間どおりの位置（次の小節の1つ目の音符のすぐ手前）か、前の小節の最後の音符の右端より少し右の、右のほう
+      const barX = Math.max(headX - flowLeads[i] - pad, previousRight + FLOW_BAR_CLEAR);
+      barXs.push(barX);
+      // ずらしたときは、この小節の音符も、その分だけ右から始まる
+      headX = barX + pad + flowLeads[i];
+      // この小節の最後の音符の右端（パートが2つ以上あるときは、いちばん右のもの）
+      previousRight = -Infinity;
+      score.parts.forEach((part) => {
+        const notes = part.measures[i].notes;
+        const lastNote = notes[notes.length - 1];
+        if (lastNote) {
+          const lastStart = lengths[i] - noteTicks(lastNote); // 最後の音符が始まる時刻（小節の頭から）
+          previousRight = Math.max(previousRight, headX + lastStart * flowPxPerTick + flowNoteWidth(lastNote));
+        }
+      });
       // くり返しの小節線（点の付いた太い線）のぶんは、時間とは別に足す
       headX = headX + lengths[i] * flowPxPerTick;
+      // （くり返しの始まりの線の幅は、次の小節の pad に入っている）
       if (score.measures[i].repeatEnd) headX = headX + REPEAT_BAR_WIDTH;
-      if (i + 1 <= last && score.measures[i + 1].repeatStart) headX = headX + REPEAT_BAR_WIDTH;
     }
     // 小節の幅（最後の小節は、最後の音符のうしろに少し空ける）
     const widths = barXs.map((x, m) => (m + 1 < barXs.length ? barXs[m + 1] - x : headX - x + FLOW_END_PADDING));
@@ -304,7 +324,7 @@ export function renderScore(VF, container, score, width, selection = null, range
     initialEnding: endingBefore(score, first), // 【音程チェックアプリ（ステップD-3）】範囲の前から続いている1番・2番かっこの番号
     flowPxPerTick: flowPxPerTick, // 【音程チェックアプリ（ステップE-2）】流れるモードの1ティックの幅（流れるモードでなければ null）
     flowLeads: flowLeads, // 【音程チェックアプリ（ステップE-2）】流れるモードの、小節ごとの「並べ始める所から1つ目の音符まで」の間
-    flowPads: flowPads, // 【音程チェックアプリ（ステップE-2）】流れるモードの、小節ごとの「小節線から並べ始める所まで」の間（null は VexFlow のまま）
+    flowPads: flowPads, // 【音程チェックアプリ（ステップE-2）】流れるモードの、小節ごとの「小節線から並べ始める所まで」の間
   };
 
   // ----- 5. 下書きを描いて、段ごと・パートごとに、五線の上下にどれだけはみ出すかを測る -----
@@ -504,8 +524,9 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
       // （音部記号が変わるパートだけ記号の幅が広い、などのずれをなくす）
       VF.Stave.formatBegModifiers(staves);
 
-      // 【音程チェックアプリ（ステップE-2）】流れるモード：記号のない小節は、小節線のすぐ右から音符を並べ始める
-      if (info.flowPxPerTick !== null && info.flowPads[i] !== null) {
+      // 【音程チェックアプリ（ステップE-2）】流れるモード：どの小節も、小節線の位置を計算したときと同じ所から音符を並べ始める
+      // （記号のない小節は、小節線のすぐ右から。記号のある小節は、測った記号の幅のあとから）
+      if (info.flowPxPerTick !== null) {
         staves.forEach((stave) => stave.setNoteStartX(stave.getX() + info.flowPads[i]));
       }
 
@@ -801,6 +822,43 @@ function flowTickWidth(score, first, last, scale) {
   // 倍率を掛ける（よく出てくる短い音符が FLOW_MIN_NOTE_ABSOLUTE より狭くならないように）
   const pxPerTick = (quarterWidth / quarterTicks) * scale;
   return Math.max(pxPerTick, FLOW_MIN_NOTE_ABSOLUTE / typical);
+}
+
+// ----------------------------------------------------------
+// 関数：flowNoteWidth
+// 【音程チェックアプリ（ステップE-2）】流れるモードで、音符（休符）の玉の左端から、右端までの幅のめやすを返す
+// 描く前に、小節の最後の音符が小節線にかからないかを調べるのに使う（旗は、連桁になるかどうか分からないので、付くものとして考える）
+//   note … 音符のデータ
+// 戻り値：幅（ピクセル）
+// ----------------------------------------------------------
+function flowNoteWidth(note) {
+  let width = note.rest ? 17 : 12; // 玉の幅（休符は、玉より少し広めにとる）
+  if (!note.rest && ["eighth", "16th", "32nd"].includes(note.duration)) width = width + 9; // 旗
+  width = width + (note.dots ?? 0) * 6; // 付点
+  return width;
+}
+
+// ----------------------------------------------------------
+// 関数：flowSignWidth
+// 【音程チェックアプリ（ステップE-2）】流れるモードで、記号のある小節の「小節線から音符を並べ始める所まで」の幅を測る
+// drawSystems で五線を作るときと同じ記号（流れるモードでは段の頭として扱わない）と、くり返しの始まりの線を付けた、
+// 試しの五線を作って測る（パートが2つ以上あるときは、いちばん広いもの）
+//   VF          … VexFlow の部品一式
+//   state       … その小節の状態（buildStates で作ったもの）
+//   measureInfo … その小節の情報（score.measures[i]）
+//   partCount   … パートの数
+//   isFirst     … 帯の最初の小節か
+// 戻り値：幅（ピクセル）
+// ----------------------------------------------------------
+function flowSignWidth(VF, state, measureInfo, partCount, isFirst) {
+  let maxWidth = 0;
+  for (let p = 0; p < partCount; p++) {
+    const testStave = new VF.Stave(0, 0, 500);
+    addModifiers(VF, testStave, state, p, false, isFirst);
+    if (measureInfo.repeatStart) testStave.setBegBarType(VF.Barline.type.REPEAT_BEGIN);
+    maxWidth = Math.max(maxWidth, testStave.getNoteStartX() - testStave.getX());
+  }
+  return maxWidth;
 }
 
 // ----------------------------------------------------------
