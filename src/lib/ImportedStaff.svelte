@@ -835,6 +835,8 @@
     <!-- ===== 流れるモード（ステップE-2）：上の帯（今）と下の帯（続き） ===== -->
     <!-- 上の帯：五線譜（1本の帯）と重ねる層を、左へずらして流す。左端に札、決まった位置に縦線 -->
     <!-- 演奏していないときは、指（マウス）で左右にずらして、先の所を見られる（ステップE-2） -->
+    <!-- キーボードでは操作しない（楽譜を見るための補助なので）。そのことを Svelte の警告に伝えておく -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="flow-view" class:browsable={flowBrowsable} onpointerdown={handlePointerDown} onpointermove={handlePointerMove} onpointerup={handlePointerUp} onpointercancel={handlePointerUp}>
       <div class="flow-row" bind:this={flowRow} style:height="{flowRowHeight}px">
         <div class="flow-track" bind:this={upperTrack}>
