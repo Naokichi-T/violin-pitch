@@ -33,6 +33,10 @@
   // 楽譜と「やめる」ボタンだけにする（カウントの間は、カウントの数字も「やめる」ボタンの横に出す）。
   // 楽譜の枠は、画面の高さいっぱいに広げる（音符の大きさは変わらない）。
   // 練習ページの設定なども隠してもらえるように、動いているかどうかが変わるたびに、練習ページに知らせる。
+  //
+  // 【楽譜の見せ方】（ステップE-2）
+  // 「ふつう」（改行した楽譜）と「流れる」（1本の帯が右から左へ流れる。上が今、下が続き）を選べる。選んだほうはブラウザに覚えておく。
+  // 「流れる」でも、結果を見るとき（最後まで弾いたあと・途中でやめて結果があるとき）は、ふつうの楽譜に戻して見せる。
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -66,7 +70,13 @@
 
   // カウントの拍の数を、ブラウザに保存する関数と読み込む関数を読み込む（今の「通し」と共通の設定）
   // （ステップC-2：流れる縦線・メトロノームの入・切を、読み込む関数と保存する関数も読み込む）
-  import { loadCountInBeats, saveCountInBeats, loadRunCursorEnabled, saveRunCursorEnabled, loadRunMetronomeEnabled, saveRunMetronomeEnabled } from "#lib/settings.js";
+  // （ステップE-2：楽譜の見せ方を、読み込む関数と保存する関数も読み込む）
+  import { loadCountInBeats, saveCountInBeats, loadRunCursorEnabled, saveRunCursorEnabled, loadRunMetronomeEnabled, saveRunMetronomeEnabled, loadRunViewMode, saveRunViewMode } from "#lib/settings.js";
+
+  // 流れるモードの幅の倍率の最小・最大と、ボタン1回で変わる量（ステップE-2）
+  const FLOW_SCALE_MIN = 0.5;
+  const FLOW_SCALE_MAX = 2;
+  const FLOW_SCALE_STEP = 0.1;
 
   // 1つの音の、どこから判定に使いはじめるか（頭の4割をよける）を読み込む
   import { JUDGE_START_RATIO } from "#lib/importedTimeline.js";
@@ -89,6 +99,8 @@
   // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか
   // repeatEnabled ：最後の音まで進んだら、最初の音に戻ってくり返すかどうか
   // staffHeight   ：五線譜の枠の高さの上限（CSS の書き方）
+  // flowScale     ：流れるモードの幅の倍率（楽譜ごとに覚えている値）（ステップE-2）
+  // onflowscalechange：流れるモードの幅の倍率を変えたときに呼ぶ関数（新しい倍率を渡す）（ステップE-2）
   // focusStaffHeight：動いている間の、五線譜の枠の高さの上限（CSS の書き方）（ステップE-1）
   // measureRange  ：五線譜に描く小節の範囲 { from, to }（練習する区間の小節だけを描くとき）。null なら全部（ステップD-3）
   // ontempochange ：テンポを変えたときに呼ぶ関数（新しいテンポを渡す）
@@ -107,6 +119,8 @@
     repeatEnabled,
     staffHeight,
     focusStaffHeight = staffHeight,
+    flowScale = 1,
+    onflowscalechange = () => {},
     measureRange = null,
     ontempochange = () => {},
     onrunningchange = () => {},
@@ -233,6 +247,12 @@
   // お手本を聴いている最中かどうか（true：お手本を聴いている。カウント・演奏の進み方は本番と同じ）（ステップC-3）
   let isPreview = $state(false);
 
+  // 楽譜の見せ方（"normal"：ふつう、"flow"：流れる）（ステップE-2）
+  let viewMode = $state("normal");
+
+  // 流れるモードで、縦線の所に来る時刻（秒。カウントの間と、始める前は 0）（ステップE-2）
+  let flowTime = $state(0);
+
   // 練習する範囲のお手本の時刻表（テンポが変わるたびに作り直す）
   // $derived を付けると、tempo が変わるたびに自動で計算し直される
   let timeline = $derived(getTimeline(tempo));
@@ -284,6 +304,11 @@
 
   // 動いている最中かどうか
   let isRunning = $derived(phase === "preparing" || phase === "countIn" || phase === "playing");
+
+  // 今、流れるモードで見せるかどうか（ステップE-2）
+  // 「流れる」を選んでいて、動いている最中か、結果がまだないとき（始める前）だけ流れるモードにする。
+  // 結果を見るとき（終わったあと・途中でやめて結果があるとき）は、ふつうの楽譜に戻す（色・印・タップで結果を見るため）
+  let flowActive = $derived(viewMode === "flow" && (isRunning || (phase === "idle" && results.length === 0)));
 
   // 動いているかどうかが変わるたびに、練習ページに知らせる（ステップE-1）
   // （練習ページは、動いている間、楽譜の名前や設定などを隠す）
@@ -407,7 +432,36 @@
     }
     cursorEnabled = loadRunCursorEnabled();
     metronomeEnabled = loadRunMetronomeEnabled();
+    viewMode = loadRunViewMode(); // ステップE-2
   });
+
+  /**
+   * 流れるモードの幅の倍率を変える関数（「−」「＋」ボタン）（ステップE-2）
+   * 小数の計算で 0.30000000000000004 のようにならないように、小数第1位で丸める。
+   * @param {number} amount - 変える量（FLOW_SCALE_STEP か、そのマイナス）
+   */
+  function changeFlowScale(amount) {
+    const next = Math.round((flowScale + amount) * 10) / 10;
+    onflowscalechange(Math.min(FLOW_SCALE_MAX, Math.max(FLOW_SCALE_MIN, next)));
+  }
+
+  /**
+   * 楽譜の見せ方を切り替える関数（「ふつう」「流れる」のボタン）（ステップE-2）
+   * 切り替えたら、ブラウザに保存する。前の結果は消す（流れるモードは、結果がないときに見せるため）。
+   * @param {string} mode - "normal"（ふつう）か "flow"（流れる）
+   */
+  function changeViewMode(mode) {
+    viewMode = mode;
+    saveRunViewMode(mode);
+    if (mode === "flow") {
+      results = [];
+      rhythmResults = [];
+      roundScores = [];
+      selectedIndex = null;
+      phase = "idle";
+      flowTime = 0;
+    }
+  }
 
   /**
    * 流れる縦線の入・切を切り替える関数（チェックボックス）（ステップC-2）
@@ -575,6 +629,7 @@
     frames = []; // ステップD
     playedClickTimes = []; // ステップD
     currentIndex = null;
+    flowTime = 0; // ステップE-2
     startTime = performance.now();
     phase = "countIn";
     countInRemaining = beats;
@@ -610,6 +665,7 @@
 
       // カウントの間、流れる縦線は、最初の目じるし（時刻 0）の所で待つ（ステップC-2）
       cursorTime = cursorEnabled ? 0 : null;
+      flowTime = 0; // 流れるモードの帯も、最初の所で待つ（ステップE-2）
     } else {
       // ----- 演奏中 -----
       if (!roundStarted) {
@@ -652,6 +708,7 @@
 
       // 流れる縦線を、今の時刻に動かす（ステップC-2）
       cursorTime = cursorEnabled ? t : null;
+      flowTime = t; // 流れるモードの帯も、今の時刻に動かす（ステップE-2）
 
       // メトロノーム：時刻が来た拍の頭のクリックを鳴らす（入のときだけ。切のときも、番号は進めておく）（ステップC-2）
       // 拍の頭の時刻は、お手本の時刻表どおり（rit. ではだんだん間が広がり、フェルマータでは待つ）
@@ -926,6 +983,10 @@
   maxHeight={isRunning ? focusStaffHeight : staffHeight}
   {measureRange}
   onselect={selectNote}
+  flow={flowActive}
+  {flowScale}
+  {flowTime}
+  flowBrowsable={!isRunning}
 />
 
 {#if isRunning}
@@ -941,6 +1002,24 @@
   </div>
 {:else}
   <!-- ===== 動いていないとき：今までどおり、全部を出す ===== -->
+
+  <!-- 楽譜の見せ方の切り替え（ステップE-2） -->
+  <div class="view-row">
+    <span class="view-caption">楽譜の見せ方</span>
+    <button class="view-button" class:selected={viewMode === "normal"} onclick={() => changeViewMode("normal")}>ふつう</button>
+    <button class="view-button" class:selected={viewMode === "flow"} onclick={() => changeViewMode("flow")}>流れる</button>
+  </div>
+
+  <!-- 流れるモードの幅の調整（ステップE-2）：「流れる」を選んでいるときだけ出す。楽譜ごとに覚える -->
+  {#if viewMode === "flow"}
+    <div class="view-row">
+      <span class="view-caption">流れる楽譜の幅</span>
+      <button class="view-button" aria-label="幅をせまくする" disabled={flowScale <= FLOW_SCALE_MIN} onclick={() => changeFlowScale(-FLOW_SCALE_STEP)}>−</button>
+      <span class="scale-value">{Math.round(flowScale * 100)}%</span>
+      <button class="view-button" aria-label="幅を広くする" disabled={flowScale >= FLOW_SCALE_MAX} onclick={() => changeFlowScale(FLOW_SCALE_STEP)}>＋</button>
+      <span class="view-caption small">広くすると速く流れます。始める前は、楽譜を左右に動かして先を見られます</span>
+    </div>
+  {/if}
 
   <!-- リズムのヒントの入・切（ステップC-2） -->
   <!-- （ステップE-1：動いている間は隠すので、演奏中には切り替えられなくなった） -->
@@ -1073,6 +1152,44 @@
 {/if}
 
 <style>
+  /* 楽譜の見せ方の行（ステップE-2） */
+  .view-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 0.9rem;
+  }
+  .view-caption {
+    color: #616161;
+  }
+  .view-caption.small {
+    font-size: 0.8rem;
+  }
+
+  /* 幅の倍率の数字 */
+  .scale-value {
+    min-width: 3.2em;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 楽譜の見せ方のボタン（練習ページの判定のボタンと同じ見た目） */
+  button.view-button {
+    height: auto;
+    padding: 6px 12px;
+    font-size: 0.9rem;
+    color: #1976d2;
+    background-color: white;
+    border: 1px solid #1976d2;
+  }
+
+  /* 選んでいる見せ方：青く塗る */
+  button.view-button.selected {
+    color: white;
+    background-color: #1976d2;
+  }
+
   /* リズムのヒントの入・切の行：チェックボックスを横に並べる（ステップC-2） */
   .hint-row {
     display: flex;

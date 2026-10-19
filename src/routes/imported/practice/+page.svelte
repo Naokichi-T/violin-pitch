@@ -53,7 +53,8 @@
 
   // 「通し」の音程の最高点を記録する関数を読み込む（ステップC-1）
   // （ステップD：リズムの最高点を記録する関数も読み込む）
-  import { recordBestPitchScore, recordBestRhythmScore } from "#lib/imported.js";
+  // （ステップE-2：流れるモードの幅の倍率を、楽譜に保存する関数も読み込む）
+  import { recordBestPitchScore, recordBestRhythmScore, saveFlowScale } from "#lib/imported.js";
 
   // ===== 練習のモードに関する設定値（ステップB） =====
 
@@ -112,6 +113,9 @@
 
   // 「開放弦の高さで弾いた音もOKにする」設定（true：する）
   let openStringEnabled = $state(true);
+
+  // 流れるモードの幅の倍率（楽譜ごとに覚える。1 なら自動で決めた幅のまま）（ステップE-2）
+  let flowScale = $state(1);
 
   // 弓の記号と指番号を表示するかどうか（true：表示する）（ステップE-1）
   let symbolsVisible = $state(true);
@@ -243,6 +247,7 @@
         runTempo = found.tempo; // ステップC-1
         bestPitchScore = typeof found.bestPitchScore === "number" ? found.bestPitchScore : null; // ステップC-1
         bestRhythmScore = typeof found.bestRhythmScore === "number" ? found.bestRhythmScore : null; // ステップD
+        flowScale = typeof found.flowScale === "number" ? found.flowScale : 1; // ステップE-2
       }
     }
 
@@ -377,6 +382,16 @@
     symbolsVisible = visible;
     saveImportedSymbolsVisible(visible);
     renderScoreData = toRenderScore(record, visible);
+  }
+
+  /**
+   * 流れるモードの幅の倍率を変えたときに呼ばれる関数（ステップE-2）
+   * 楽譜に保存する（次に開いたときも、同じ幅で流れる）。
+   * @param {number} scale - 新しい倍率
+   */
+  function handleFlowScaleChange(scale) {
+    flowScale = scale;
+    saveFlowScale(record.id, scale);
   }
 
   /**
@@ -675,6 +690,8 @@
               measureRange={displayRange}
               ontempochange={(value) => (runTempo = value)}
               onrunningchange={handleRunningChange}
+              {flowScale}
+              onflowscalechange={handleFlowScaleChange}
               onfinish={handleRunFinish}
             />
           {:else}

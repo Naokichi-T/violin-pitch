@@ -8,6 +8,8 @@
 //     ・noteColors … 音符ごとの色（判定から外す音を灰色にするため。あとで判定の結果の色にも使う）
 //   （ステップD-3：もう1つ足した）
 //     ・measureRange … 描く小節の範囲（練習する区間の小節だけを描くため）
+//   （ステップE-2：もう1つ足した）
+//     ・proportional … 改行しない1本の帯にして、音符を「始まる時刻」に比例した位置に置く（流れるモードのため）
 // 楽譜データを VexFlow で五線譜に描くファイル
 // ここには「どの順番で何を描くか」という全体の流れだけを書く
 // 細かい処理は render フォルダの中のファイルに分けてある
@@ -24,7 +26,7 @@
 //   render/alternate.js … 2音トレモロの2つ目の音符と連桁を描く（ステップ14-6a）
 // ==========================================================
 
-import { tempoAt, JUMP_TEXTS, rehearsalLabel, isMeasureRest, notePitches, samePitch, measureNumber, measureLength } from "./model.js";
+import { tempoAt, JUMP_TEXTS, rehearsalLabel, isMeasureRest, notePitches, samePitch, measureNumber, measureLength, noteTicks, TICKS_PER_16TH } from "./model.js";
 import { computeAccidentals } from "./accidentals.js";
 import { createNote } from "./render/notes.js";
 import { drawDynamic, drawBreath, drawTrillLine, shiftTremolo } from "./render/symbols.js";
@@ -64,6 +66,19 @@ const MEASURE_BASE_WIDTH = 40; // 小節の最低限の幅
 // （ステップ13-2：音符1つ・臨時記号1つ・前打音1つあたりに決まった幅を足す決め方はやめて、render/widths.js で決める）
 const MIN_WIDTH = 600; // 楽譜の最低限の幅（これより狭い画面でも、この幅で描く）
 const NOTE_END_PADDING = 22; // 小節の最後の音符と、小節線の間に空けるすき間
+
+// 【音程チェックアプリ（ステップE-2）】流れるモード（proportional）の音符の間隔の設定
+// 小節線から、小節の1つ目の音符（の玉）までの間
+const FLOW_LEAD_PLAIN = 7; // 臨時記号のない音符・休符
+const FLOW_LEAD_ACCIDENTAL = 18; // 臨時記号の付いた音符（臨時記号が入る幅）
+const FLOW_LEAD_GRACE = 26; // 前打音の付いた音符（前打音が入る幅）
+const FLOW_BAR_GAP = 3; // 小節線（記号のない小節の頭）から、音符を並べ始める所までの間
+const FLOW_END_PADDING = 24; // 最後の小節の、最後の音符のうしろに空ける幅
+const FLOW_MIN_NOTE_ABSOLUTE = 28; // 幅をどれだけ狭くしても、よく出てくる短い音符に取る幅の最小（小節線や音符が重ならないように）
+const FLOW_MIN_NOTE_WIDTH = 44; // いちばん短い音符（休符も）に、少なくとも取る幅（♯・付点が重ならないように）
+const FLOW_MIN_QUARTER = 70; // 4分音符1つ分の幅の最小（短い音符がない曲でも、詰まりすぎないように）
+const FLOW_MAX_QUARTER = 200; // 4分音符1つ分の幅の最大（32分音符などがあっても、長くなりすぎないように）
+const FLOW_SHORT_RATIO = 0.1; // 幅を合わせる「よく出てくる短い音符」：音符を短い順に並べて、短いほうから1割の所の長さ
 
 // 選択中の音符の色（青）と、範囲選択の中の音符の色（明るい青）
 const SELECTED_COLOR = "#2563eb";
@@ -109,6 +124,10 @@ let lastMeasured = { score: null, width: 0, rangeKey: "", extents: null };
 //                              範囲の最初の小節には、楽譜の最初の小節と同じように、音部記号・調号・拍子記号を描き、
 //                              いちばん上に、その小節でのテンポを描く。小節番号は、元の楽譜の番号のまま
 //                              （当たり判定の四角の measure も、元の楽譜の番号のまま）
+//                 proportional … true なら、改行しない1本の帯にして、音符を「始まる時刻」に比例した位置に置く（ステップE-2）
+//                              4分音符1つ分の幅は、いちばん短い音符でも記号が重ならないように自動で決める。
+//                              楽譜の幅（width・minWidth）は使わず、帯の長さに合わせた幅で描く
+//                 flowScale  … 流れるモードの幅の倍率（省略したら 1。0.5 なら半分の幅、2 なら倍の幅）（ステップE-2）
 // 戻り値：{ hitBoxes, lineTops, lineBottoms, totalHeight }
 //   hitBoxes    … クリックの当たり判定に使う、音符ごとの四角の一覧
 //                 [{ part, measure, note, x, y, w, h, lineTop, lineBottom }, ...]
@@ -124,7 +143,8 @@ export function renderScore(VF, container, score, width, selection = null, range
 
   // 狭すぎるときは最低限の幅にする
   // 【音程チェックアプリ（ステップA-2）】最低限の幅を options.minWidth で変えられるようにした
-  const totalWidth = Math.max(width, options.minWidth ?? MIN_WIDTH);
+  // 【音程チェックアプリ（ステップE-2）】流れるモードでは、あとで帯の長さに合わせて決め直すので let にした
+  let totalWidth = Math.max(width, options.minWidth ?? MIN_WIDTH);
 
   const partCount = score.parts.length; // パートの数
   const measureCount = score.measures.length; // 小節の数
@@ -145,6 +165,16 @@ export function renderScore(VF, container, score, width, selection = null, range
       timeChanged: true,
       keyChanged: true,
       clefChanged: states[first].clefChanged.map(() => true),
+    };
+  }
+
+  // 【音程チェックアプリ（ステップE-2）】流れるモードでは、帯の頭に音部記号と調号を描かない
+  // （帯の左端に、音部記号と調号の札を別に固定して出すので、二重にならないように。拍子記号は描く）
+  if (options.proportional) {
+    states[first] = {
+      ...states[first],
+      keyChanged: false,
+      clefChanged: states[first].clefChanged.map(() => false),
     };
   }
 
@@ -193,17 +223,63 @@ export function renderScore(VF, container, score, width, selection = null, range
   const lengths = score.measures.map((_, i) => measureLength(score, i));
   // 【音程チェックアプリ（ステップD-3）】描く範囲の小節だけで改行の位置を決める
   // （layoutLines は、渡した並びの何番目かで小節の番号を返すので、あとで first を足して、元の楽譜の番号に戻す）
-  const lines = layoutLines(
-    noteWidths.slice(first, last + 1),
-    startWidths.slice(first, last + 1),
-    middleWidths.slice(first, last + 1),
-    totalWidth - firstLeft - LEFT,
-    totalWidth - otherLeft - LEFT,
-    lengths.slice(first, last + 1),
-  );
-  lines.forEach((line) => {
-    line.measures = line.measures.map((m) => m + first);
-  });
+  // 【音程チェックアプリ（ステップE-2）】流れるモード：1ティックあたりの幅（流れるモードでなければ null）
+  // （自動で決めた幅に、使う人が決めた倍率（flowScale）を掛ける）
+  const flowPxPerTick = options.proportional ? flowTickWidth(score, first, last, options.flowScale ?? 1) : null;
+
+  // 【音程チェックアプリ（ステップE-2）】流れるモード：小節ごとの「小節線から1つ目の音符まで」の並べ方
+  // lead … 音符を並べ始める所から、1つ目の音符の玉までの間（臨時記号・前打音があると広い）
+  // pad  … 小節線から、音符を並べ始める所までの間（記号のない小節は FLOW_BAR_GAP に詰める。null なら VexFlow の決めたまま）
+  const flowLeads = [];
+  const flowPads = [];
+  if (flowPxPerTick !== null) {
+    for (let i = 0; i < measureCount; i++) {
+      flowLeads.push(flowLead(score, accidentalsList, i));
+      // 記号（拍子・調・音部記号・くり返しの始まり）のある小節と、帯の最初の小節は、VexFlow の決めた幅のまま
+      const state = states[i];
+      const hasSigns = i === first || state.timeChanged || state.keyChanged || state.clefChanged.some((changed) => changed) || !!score.measures[i].repeatStart;
+      flowPads.push(hasSigns ? null : FLOW_BAR_GAP);
+    }
+  }
+
+  let lines;
+  if (flowPxPerTick !== null) {
+    // 【音程チェックアプリ（ステップE-2）】流れるモード：改行せず、全部の小節を1つの段に並べる
+    // どの小節の音符も「始まる時刻 × 1ティックの幅」の位置（headX）に来るように、小節線の位置を逆算する：
+    //   小節線の位置 ＝ その小節の1つ目の音符の位置 − lead − pad（小節線は、次の小節の1つ目の音符のすぐ手前に来る）
+    //   小節の幅     ＝ 次の小節の小節線の位置 − この小節の小節線の位置
+    // （前は、小節の幅を「記号の幅 ＋ 小節の長さ」にしていたので、幅を狭くすると、
+    //   小節線が小節の最後の音符より左に来てしまっていた）
+    const measures = [];
+    const barXs = []; // 小節ごとの、小節線（五線の左端）の位置（帯の最初の音符の位置を 0 とした値）
+    let headX = 0; // 小節の1つ目の音符の位置（帯の最初の音符を 0 とする）
+    for (let i = first; i <= last; i++) {
+      const pad = flowPads[i] ?? middleWidths[i];
+      measures.push(i);
+      barXs.push(headX - flowLeads[i] - pad);
+      // くり返しの小節線（点の付いた太い線）のぶんは、時間とは別に足す
+      headX = headX + lengths[i] * flowPxPerTick;
+      if (score.measures[i].repeatEnd) headX = headX + REPEAT_BAR_WIDTH;
+      if (i + 1 <= last && score.measures[i + 1].repeatStart) headX = headX + REPEAT_BAR_WIDTH;
+    }
+    // 小節の幅（最後の小節は、最後の音符のうしろに少し空ける）
+    const widths = barXs.map((x, m) => (m + 1 < barXs.length ? barXs[m + 1] - x : headX - x + FLOW_END_PADDING));
+    lines = [{ measures: measures, widths: widths }];
+    // 楽譜の幅は、帯の長さに合わせる（左右の余白も入れる）
+    totalWidth = firstLeft + widths.reduce((sum, w) => sum + w, 0) + LEFT;
+  } else {
+    lines = layoutLines(
+      noteWidths.slice(first, last + 1),
+      startWidths.slice(first, last + 1),
+      middleWidths.slice(first, last + 1),
+      totalWidth - firstLeft - LEFT,
+      totalWidth - otherLeft - LEFT,
+      lengths.slice(first, last + 1),
+    );
+    lines.forEach((line) => {
+      line.measures = line.measures.map((m) => m + first);
+    });
+  }
 
   // タイトルか作曲者があるときだけ、上に場所を空ける（テンポの場所はいつも空ける）
   // （keepHeader が true なら、空でも空ける：PDF の左上のパート名がテンポに重ならないように。後で直す候補の手直し）
@@ -226,6 +302,9 @@ export function renderScore(VF, container, score, width, selection = null, range
     noteColors: options.noteColors ?? null, // 【音程チェックアプリ（ステップA-2）】音符ごとの色の表（なければ null）
     firstMeasure: first, // 【音程チェックアプリ（ステップD-3）】描く最初の小節の番号
     initialEnding: endingBefore(score, first), // 【音程チェックアプリ（ステップD-3）】範囲の前から続いている1番・2番かっこの番号
+    flowPxPerTick: flowPxPerTick, // 【音程チェックアプリ（ステップE-2）】流れるモードの1ティックの幅（流れるモードでなければ null）
+    flowLeads: flowLeads, // 【音程チェックアプリ（ステップE-2）】流れるモードの、小節ごとの「並べ始める所から1つ目の音符まで」の間
+    flowPads: flowPads, // 【音程チェックアプリ（ステップE-2）】流れるモードの、小節ごとの「小節線から並べ始める所まで」の間（null は VexFlow のまま）
   };
 
   // ----- 5. 下書きを描いて、段ごと・パートごとに、五線の上下にどれだけはみ出すかを測る -----
@@ -233,7 +312,8 @@ export function renderScore(VF, container, score, width, selection = null, range
   // 楽譜データと幅が前回と同じなら、前回測った結果をそのまま使う
   let extents;
   // （【音程チェックアプリ（ステップD-3）】描く小節の範囲も同じときだけ）
-  const rangeKey = `${first}-${last}`;
+  // （【音程チェックアプリ（ステップE-2）】流れるモードかどうかも入れる。はみ出し方が変わるため）
+  const rangeKey = `${first}-${last}-${flowPxPerTick !== null}`;
   if (lastMeasured.score === score && lastMeasured.width === totalWidth && lastMeasured.rangeKey === rangeKey) {
     extents = lastMeasured.extents;
   } else {
@@ -403,7 +483,8 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
       const staves = score.parts.map((part, p) => {
         const y = staveYs[l][p]; // この段・このパートの五線を置く高さ（spacing.js で決めたもの）
         const stave = new VF.Stave(x, y, measureWidth);
-        addModifiers(VF, stave, state, p, isLineStart, isFirst);
+        // 【音程チェックアプリ（ステップE-2）】流れるモードでは、段の頭として音部記号と調号を描かない
+        addModifiers(VF, stave, state, p, isLineStart && info.flowPxPerTick === null, isFirst);
 
         // 小節の頭の線：くり返しの始まり（‖:）（ステップ11-7a）
         if (measureInfo.repeatStart) stave.setBegBarType(VF.Barline.type.REPEAT_BEGIN);
@@ -422,6 +503,11 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
       // 全パートで、音符が始まる位置をそろえる
       // （音部記号が変わるパートだけ記号の幅が広い、などのずれをなくす）
       VF.Stave.formatBegModifiers(staves);
+
+      // 【音程チェックアプリ（ステップE-2）】流れるモード：記号のない小節は、小節線のすぐ右から音符を並べ始める
+      if (info.flowPxPerTick !== null && info.flowPads[i] !== null) {
+        staves.forEach((stave) => stave.setNoteStartX(stave.getX() + info.flowPads[i]));
+      }
 
       // 2段目からの段の頭では、音部記号・調号と最初の音符の間を少し空ける
       // （段をまたぐタイの弧を描く場所を作る）
@@ -502,6 +588,18 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
       // 音符を並べる幅（小節の終わりに NOTE_END_PADDING のすき間を残す）
       const noteAreaWidth = staves[0].getNoteEndX() - staves[0].getNoteStartX() - NOTE_END_PADDING;
       formatter.format(voices, noteAreaWidth);
+
+      // 【音程チェックアプリ（ステップE-2）】流れるモード：VexFlow が並べた位置を、「始まる時刻」に比例した位置に置き直す
+      // （音符の横の位置は TickContext の x で決まる。小節の音符が始まる所からの距離）
+      if (info.flowPxPerTick !== null) {
+        score.parts.forEach((part, p) => {
+          let ticks = 0; // 小節の頭からの時刻（ティック）
+          voices[p].getTickables().forEach((tickable, j) => {
+            tickable.getTickContext().setX(info.flowLeads[i] + ticks * info.flowPxPerTick);
+            ticks = ticks + noteTicks(part.measures[i].notes[j]);
+          });
+        });
+      }
 
       // トレモロの斜線を、旗・連桁と重ならない所までずらす（符尾の向きが決まったあとに行う）（ステップ11-4）
       score.parts.forEach((part, p) => {
@@ -665,6 +763,66 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
   drawSpanners(VF, context, allNotes, lineBounds);
 
   return allNotes;
+}
+
+// ----------------------------------------------------------
+// 関数：flowTickWidth
+// 【音程チェックアプリ（ステップE-2）】流れるモードの、1ティックあたりの幅（ピクセル）を決める
+// 「よく出てくる短い音符」（音符を短い順に並べて、短いほうから FLOW_SHORT_RATIO の所の長さ）に、
+// FLOW_MIN_NOTE_WIDTH を取れる幅にする（4分音符1つ分が、最小〜最大の間に入るように）
+// （前は「いちばん短い音符」に合わせていたが、16分音符が1つあるだけで曲全体が広くなりすぎたので変えた。
+//   たまにしか出てこない短い音符は、少し詰まって描かれる）
+// 使う人が決めた倍率（scale）も掛ける。ただし、よく出てくる短い音符が FLOW_MIN_NOTE_ABSOLUTE より狭くはならないようにする
+//   score       … 楽譜データ
+//   first, last … 描く小節の範囲
+//   scale       … 使う人が決めた幅の倍率
+// 戻り値：1ティックあたりの幅
+// ----------------------------------------------------------
+function flowTickWidth(score, first, last, scale) {
+  const quarterTicks = 4 * TICKS_PER_16TH; // 4分音符1つ分のティック
+
+  // 音符（休符は除く）の長さを集めて、短い順に並べる
+  const lengths = [];
+  score.parts.forEach((part) => {
+    for (let i = first; i <= last; i++) {
+      part.measures[i].notes.forEach((note) => {
+        if (!note.rest) lengths.push(noteTicks(note));
+      });
+    }
+  });
+  lengths.sort((a, b) => a - b);
+
+  // よく出てくる短い音符の長さ（音符がないときは、4分音符）
+  const typical = lengths.length > 0 ? lengths[Math.floor(lengths.length * FLOW_SHORT_RATIO)] : quarterTicks;
+
+  // 4分音符1つ分の幅：その音符が FLOW_MIN_NOTE_WIDTH になる幅（最小〜最大の間に収める）
+  const quarterWidth = Math.min(FLOW_MAX_QUARTER, Math.max(FLOW_MIN_QUARTER, (FLOW_MIN_NOTE_WIDTH * quarterTicks) / typical));
+
+  // 倍率を掛ける（よく出てくる短い音符が FLOW_MIN_NOTE_ABSOLUTE より狭くならないように）
+  const pxPerTick = (quarterWidth / quarterTicks) * scale;
+  return Math.max(pxPerTick, FLOW_MIN_NOTE_ABSOLUTE / typical);
+}
+
+// ----------------------------------------------------------
+// 関数：flowLead
+// 【音程チェックアプリ（ステップE-2）】流れるモードで、小節の音符を並べ始める所から、1つ目の音符の玉までの間を決める
+// 1つ目の音符に臨時記号・前打音があるときは、その分を広くとる
+//   score           … 楽譜データ
+//   accidentalsList … パートごと・小節ごとの臨時記号（renderScore の 2. で決めたもの）
+//   i               … 何小節目か
+// 戻り値：間（ピクセル）
+// ----------------------------------------------------------
+function flowLead(score, accidentalsList, i) {
+  let lead = FLOW_LEAD_PLAIN;
+  score.parts.forEach((part, p) => {
+    const note = part.measures[i].notes[0];
+    if (!note || note.rest) return;
+    if (note.grace) lead = Math.max(lead, FLOW_LEAD_GRACE);
+    // 1つ目の音符の、高さごとの臨時記号（どれか1つでも付いていれば広くする）
+    const accidentals = accidentalsList[p][i][0] ?? [];
+    if (accidentals.some((accidental) => accidental)) lead = Math.max(lead, FLOW_LEAD_ACCIDENTAL);
+  });
+  return lead;
 }
 
 // ----------------------------------------------------------

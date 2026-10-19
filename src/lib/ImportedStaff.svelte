@@ -13,6 +13,9 @@
   // （ステップD-3：描く小節の範囲（measureRange）を足した。練習する区間の小節だけを描くため。
   //   小節の番号は、範囲を決めても元の楽譜の番号のままなので、色・帯・印・タップの場所は、今までと同じ番号で使える）
   // （ステップE-1：自動スクロールで、段が変わるたびに、今の段を枠のいちばん上に置くようにした。次の段がいつも見えるように）
+  // （ステップE-2：流れるモード（flow）を足した。楽譜を改行しない1本の帯にして（音符は時間に比例した位置）、
+  //   上下に2本並べる。上の帯は「今」、下の帯は「その続き」。帯は描き直さずに、位置だけを左へずらして流す。
+  //   帯の左端には、今の所の音部記号と調号の札を固定して出す。縦線は上の帯の決まった位置に止めておく）
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // tick：画面の書き換えが終わるのを待つための仕組み（描いたあとにスクロールするときに使う）
@@ -21,6 +24,13 @@
 
   // 楽譜データを五線譜に描く関数を読み込む（楽譜作成アプリからコピーしたもの）
   import { renderScore } from "#lib/musicxml/render.js";
+
+  // 流れるモードの札（音部記号・調号）を描くために、小節ごとの状態を作る関数・五線の大きさを調べる関数・
+  // 音部記号の表・調を VexFlow の書き方にする関数を読み込む（ステップE-2）
+  import { buildStates } from "#lib/musicxml/render/measures.js";
+  import { staffMetrics } from "#lib/musicxml/render/spacing.js";
+  import { CLEFS } from "#lib/musicxml/model.js";
+  import { keyToVexKey } from "#lib/musicxml/render/helpers.js";
 
   // この部品を使う側から受け取る値
   // score       ：楽譜作成アプリの形の楽譜データ（imported.js の toRenderScore で作ったもの。パートは1つ）
@@ -45,6 +55,11 @@
   //               1秒に何十回も変わるが、五線譜も重ねる層も描き直さず、縦線の位置だけを動かす
   // measureRange：描く小節の範囲 { from, to }（0 から数えた小節の番号。to も描く）（ステップD-3）
   //               省略したら（null）、全部の小節を描く
+  // flow        ：true なら、流れるモードで描く（ステップE-2）
+  // flowBrowsable：流れるモードで、指（マウス）で横にずらして先を見られるようにするか（演奏していないときだけ true）（ステップE-2）
+  // flowScale   ：流れるモードの幅の倍率（1 なら自動で決めた幅のまま）（ステップE-2）
+  // flowTime    ：流れるモードで、縦線の所に来る時刻（秒。時刻表と同じ数え方）。null なら 0 と同じ（ステップE-2）
+  //               縦線を出すかどうかは、cursorTime が null かどうかで決める（流れる縦線のチェック）
   let {
     score,
     noteColors = new Map(),
@@ -57,6 +72,10 @@
     cursorKeys = [],
     cursorTime = null,
     measureRange = null,
+    flow = false,
+    flowScale = 1,
+    flowTime = null,
+    flowBrowsable = false,
   } = $props();
 
   // ===== 描き方の設定値 =====
@@ -96,6 +115,14 @@
   const CURSOR_EXTEND = 12; // 五線の上と下に、どれだけはみ出させるか（ピクセル）
   const CURSOR_END_INSET = 3; // 小節の右端の目じるしを、小節線からどれだけ左に置くか（ピクセル。小節線と重ならないように）
 
+  // 流れるモードの設定（ステップE-2）
+  const FLOW_CURSOR_OFFSET = 100; // 縦線を置く位置：札の右端から、これだけ右（ピクセル）
+  // （前は「帯の幅の4分の1」にしていたが、PC などの広い画面では、始める前の空白が広くなりすぎたので、決まった距離にした）
+  const FLOW_LABEL_PADDING = 8; // 札の、調号の右に空けるすき間（ピクセル）
+
+  // この部品の名札（流れるモードで、下の帯から上の帯の絵を <use> で指すときの id に使う。1つのページに2つあっても重ならないように）
+  const uid = "staff-" + Math.random().toString(36).slice(2);
+
   // ===== 描くのに使う値 =====
 
   // VexFlow の部品一式（読み込みが終わるまでは null）
@@ -134,6 +161,30 @@
   // （描き直すと、音符の位置が変わることがあるため）
   let renderVersion = $state(0);
 
+  // ===== 流れるモードで使う値（ステップE-2） =====
+
+  // 上の帯の枠・上の帯と下の帯の動く部分・下の帯の絵（SVG）・札の場所2つ・止まっている縦線
+  let flowRow = $state(null);
+  let upperTrack = $state(null);
+  let lowerTrack = $state(null);
+  let lowerSvg = $state(null);
+  let upperLabel = $state(null);
+  let lowerLabel = $state(null);
+  let flowCursor = $state(null);
+
+  // 帯1本の高さ（ピクセル）と、描いた絵の中で帯が始まる高さ（段の上端。上の余白は切り取って見せる）
+  let flowRowHeight = $state(0);
+  let flowLineTop = 0;
+
+  // 指（マウス）で横にずらした量（ピクセル。右へ進めた分がプラス）と、ずらしている最中の指の位置（ステップE-2）
+  let browseOffset = $state(0);
+  let dragX = null;
+
+  // 小節ごとの状態（音部記号・調）と、札の幅（ピクセル）と、最後に描いた札の中身（同じなら描き直さない）
+  let flowStates = [];
+  let labelWidth = 0;
+  let lastLabelKey = "";
+
   // 最後に自動スクロールしたときの、段の上端の高さ（ステップE-1）
   // 段が変わったときだけ、今の段を枠のいちばん上に置き直すために覚えておく（画面には出さないので $state は付けない）
   let lastScrolledLineTop = null;
@@ -152,8 +203,15 @@
       hideNames: true, // パート名は描かない（ページの上に出しているので）
       noteColors: noteColors, // 判定から外す音の灰色・目標の音・通過した音・判定の結果などの色
       measureRange: measureRange, // 描く小節の範囲（null なら全部）（ステップD-3）
+      proportional: flow, // 流れるモードなら、1本の帯で、時間に比例した位置に描く（ステップE-2）
+      flowScale: flowScale, // 流れるモードの幅の倍率（ステップE-2）
     });
     hitBoxes = result.hitBoxes;
+
+    // 流れるモードの準備（ステップE-2）
+    if (flow) {
+      prepareFlow(result);
+    }
 
     // 音符の後ろに帯を敷く（ステップB-2）
     drawBands(bands);
@@ -165,10 +223,11 @@
   });
 
   // ② 自動スクロールの係：見せたい音符（focus）か、描いた回数が変わったときに動く（ステップC-1：①から分けた）
+  // （ステップE-2：流れるモードでは、縦にスクロールしない）
   $effect(() => {
     const target = focus;
     renderVersion; // 描き直したときにも動くように、読んでおく
-    if (target !== null) {
+    if (target !== null && !flow) {
       // 画面の書き換えが終わってからスクロールする
       tick().then(() => scrollToNote(target));
     }
@@ -191,13 +250,205 @@
     cursorPoints = container !== null ? buildCursorPoints(keys) : [];
     cursorSearchIndex = 0;
     // 位置を作り直したら、今の時刻の位置に置き直す（untrack：cursorTime の変化では、この係は動かない）
-    untrack(() => moveCursor(cursorTime));
+    // （ステップE-2：流れるモードなら、帯の位置も置き直す）
+    untrack(() => {
+      moveCursor(cursorTime);
+      moveFlow(flowTime, cursorTime);
+    });
   });
 
   // ⑤ 流れる縦線を動かす係：時刻が変わるたびに、縦線の位置だけを変える（ステップC-2）
   $effect(() => {
     moveCursor(cursorTime);
   });
+
+  // ⑥ 流れるモードで、帯を流す係：時刻が変わるたびに、帯の位置だけを変える（ステップE-2）
+  // （横にずらした量 browseOffset も moveFlow の中で読んでいるので、ずらしたときにも動く）
+  $effect(() => {
+    moveFlow(flowTime, cursorTime);
+  });
+
+  // ⑦ 横にずらせなくなったら（演奏を始めたら）、ずらした量を 0 に戻す係（ステップE-2）
+  $effect(() => {
+    if (!flowBrowsable) {
+      browseOffset = 0;
+    }
+  });
+
+  // ⑧ マウスのホイール・トラックパッドの横スクロールで、帯を横にずらす係（ステップE-2）
+  // （ホイールを止める preventDefault を使うので、passive: false で自分で登録する）
+  $effect(() => {
+    if (!flow || wrapper === null) {
+      return;
+    }
+    const element = wrapper;
+    const handleWheel = (event) => {
+      if (!flowBrowsable) {
+        return;
+      }
+      // 横の動き（または Shift を押しながらの縦の動き）だけを使う。ふつうの縦スクロールは、ページのスクロールにまかせる
+      const amount = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.shiftKey ? event.deltaY : 0;
+      if (amount === 0) {
+        return;
+      }
+      event.preventDefault(); // ブラウザの「戻る」などの動きを止める
+      browseBy(amount);
+    };
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    return () => element.removeEventListener("wheel", handleWheel);
+  });
+
+  /**
+   * 流れるモードで、帯を横にずらす関数（ステップE-2）
+   * 0（最初の所）より前と、帯の最後より先には、ずらさない。
+   * @param {number} amount - ずらす量（ピクセル。プラスで先へ進む）
+   */
+  function browseBy(amount) {
+    const last = cursorPoints.length > 0 ? cursorPoints[cursorPoints.length - 1].x - cursorPoints[0].x : 0;
+    browseOffset = Math.min(last, Math.max(0, browseOffset + amount));
+  }
+
+  /**
+   * 流れるモードで、指（マウス）を帯に置いたときの関数（ステップE-2）
+   * @param {PointerEvent} event - 指を置いた出来事
+   */
+  function handlePointerDown(event) {
+    if (!flowBrowsable) {
+      return;
+    }
+    dragX = event.clientX;
+    // 指が帯の外に出ても、動きを受け取りつづける
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  /**
+   * 流れるモードで、指（マウス）を動かしたときの関数（ステップE-2）
+   * 指を左へ動かすと、先（右側）が見えるようにずらす。
+   * @param {PointerEvent} event - 指を動かした出来事
+   */
+  function handlePointerMove(event) {
+    if (dragX === null) {
+      return;
+    }
+    browseBy(dragX - event.clientX);
+    dragX = event.clientX;
+  }
+
+  /**
+   * 流れるモードで、指（マウス）を離したときの関数（ステップE-2）
+   */
+  function handlePointerUp() {
+    dragX = null;
+  }
+
+  /**
+   * 流れるモードの準備をする関数（ステップE-2）
+   * 五線譜を描いたあとに呼ぶ。描いた絵に id を付けて下の帯から指せるようにし、帯の高さを決め、札を描き直す準備をする。
+   * @param {{lineTops: number[], lineBottoms: number[]}} result - renderScore の戻り値
+   */
+  function prepareFlow(result) {
+    const svg = container.querySelector("svg");
+    if (svg === null || lowerSvg === null) {
+      return;
+    }
+
+    // 下の帯は、上の帯の絵（五線譜と重ねる層）を <use> で指して、同じ絵を出す（同じ絵を2回描かなくて済む）
+    svg.setAttribute("id", uid + "-main");
+    lowerSvg.setAttribute("width", svg.getAttribute("width"));
+    lowerSvg.setAttribute("height", svg.getAttribute("height"));
+
+    // 帯の高さ：段の上端〜下端（はみ出した記号も入る）。上のテンポの文字などの余白は切り取る
+    flowLineTop = result.lineTops[0];
+    flowRowHeight = Math.ceil(result.lineBottoms[0] - result.lineTops[0]);
+    [upperTrack, lowerTrack].forEach((track) => {
+      if (track !== null) {
+        track.style.top = -flowLineTop + "px";
+      }
+    });
+
+    // 札のために、小節ごとの状態を作り直す（次に帯を動かしたときに、札を描き直す）
+    flowStates = buildStates(score);
+    lastLabelKey = "";
+  }
+
+  /**
+   * 流れるモードの札（音部記号と調号）を、上下の帯の左端に描く関数（ステップE-2）
+   * 小節の音部記号・調が、最後に描いたものと同じなら、何もしない。
+   * @param {number} measure - 今の小節の番号
+   */
+  function drawFlowLabels(measure) {
+    const state = flowStates[measure];
+    const svg = container.querySelector("svg");
+    if (state === undefined || svg === null || upperLabel === null || lowerLabel === null) {
+      return;
+    }
+    const labelKey = state.clefs[0] + "|" + state.key;
+    if (labelKey === lastLabelKey) {
+      return;
+    }
+    lastLabelKey = labelKey;
+
+    // 帯の五線の一番上の線の高さ（描いた絵の中の五線のまとまりから調べる）から、札の五線を置く高さを決める
+    const staveBox = svg.querySelector(".vf-stave").getBBox();
+    const staveY = staveBox.y - staffMetrics(VF).staffTop;
+    const height = Number(svg.getAttribute("height"));
+
+    [upperLabel, lowerLabel].forEach((label) => {
+      label.innerHTML = "";
+      const renderer = new VF.Renderer(label, VF.Renderer.Backends.SVG);
+      renderer.resize(400, height);
+      const context = renderer.getContext();
+      // 音部記号と調号だけの五線（終わりの小節線は描かない）
+      const stave = new VF.Stave(0, staveY, 400);
+      stave.addClef(CLEFS[state.clefs[0]].vf);
+      stave.addKeySignature(keyToVexKey(state.key));
+      stave.setEndBarType(VF.Barline.type.NONE);
+      labelWidth = Math.ceil(stave.getNoteStartX() + FLOW_LABEL_PADDING);
+      stave.setWidth(labelWidth);
+      stave.setContext(context).draw();
+      renderer.resize(labelWidth, height);
+      // 札も、帯と同じだけ上を切り取る
+      label.style.top = -flowLineTop + "px";
+      label.style.width = labelWidth + "px";
+    });
+  }
+
+  /**
+   * 流れるモードで、帯を時刻に合った位置にずらす関数（ステップE-2）
+   * 上の帯は、その時刻の所が縦線の位置に来るようにずらす。下の帯は、上の帯の右端の続きが、札の右から始まるようにずらす。
+   * @param {number|null} time - 縦線の所に来る時刻（秒）。null なら 0
+   * @param {number|null} lineTime - 流れる縦線の時刻（null なら、縦線を隠す）
+   */
+  function moveFlow(time, lineTime) {
+    if (!flow || flowRow === null || upperTrack === null || lowerTrack === null || flowCursor === null) {
+      return;
+    }
+    const position = cursorPositionAt(time ?? 0);
+    if (position === null) {
+      return;
+    }
+    // 横にずらしているときは、その分だけ先の所を見せる（演奏中は 0）
+    const contentX = position.x + browseOffset;
+
+    // 今の小節の札を描く（音部記号・調が変わったときだけ描き直す）
+    drawFlowLabels(position.measure);
+
+    // 縦線の位置：札の右端から FLOW_CURSOR_OFFSET だけ右
+    const rowWidth = flowRow.clientWidth;
+    const cursorX = labelWidth + FLOW_CURSOR_OFFSET;
+
+    // 上の帯：時刻の所（position.x）が縦線の位置に来るようにずらす
+    // 下の帯：上の帯の右端に見えている所が、札の右端に来るようにずらす（帯の見える幅から札の幅を引いた分だけ先）
+    const upperShift = cursorX - contentX;
+    const lowerShift = upperShift - (rowWidth - labelWidth);
+    // translate3d にすると、スマホでも絵を描き直さずに位置だけを動かしてくれる（なめらかに動く）
+    upperTrack.style.transform = "translate3d(" + upperShift + "px, 0, 0)";
+    lowerTrack.style.transform = "translate3d(" + lowerShift + "px, 0, 0)";
+
+    // 縦線：流れる縦線のチェックが入っているときだけ出す
+    flowCursor.style.left = cursorX + "px";
+    flowCursor.style.visibility = lineTime !== null ? "visible" : "hidden";
+  }
 
   /**
    * 流れる縦線の目じるしを、五線譜の上の位置（横の位置と、五線の上端の高さ）にする関数（ステップC-2）
@@ -225,6 +476,12 @@
       if (stave === undefined) {
         return;
       }
+      // 流れるモードでは、音符の目じるしだけを使う（ステップE-2）
+      // （音符は時間に比例した位置にあるので、音符と音符の間をなめらかに動かせば、帯はいつも同じ速さで流れる。
+      //   小節の始まり・終わりの目じるしを使うと、小節線の所で一瞬止まってから跳ぶように見えるため）
+      if (flow && typeof key.note !== "number") {
+        return;
+      }
       let x = null;
       if (key.note === "end") {
         // 小節の終わり：小節線の少し左
@@ -241,7 +498,8 @@
         }
       }
       if (x !== null) {
-        points.push({ time: key.time, x: x, top: stave.y });
+        // （ステップE-2：小節の番号も入れておく。流れるモードの札に使う）
+        points.push({ time: key.time, x: x, top: stave.y, measure: key.measure });
       }
     });
     return points;
@@ -270,6 +528,27 @@
       cursorLayer.style.top = container.offsetTop + "px";
     }
 
+    // 時刻に合った位置を求める（ステップE-2：流れるモードでも使うので、関数に分けた）
+    const position = cursorPositionAt(time);
+
+    cursorLine.setAttribute("x1", String(position.x));
+    cursorLine.setAttribute("x2", String(position.x));
+    cursorLine.setAttribute("y1", String(position.top - CURSOR_EXTEND));
+    cursorLine.setAttribute("y2", String(position.top + STAFF_HEIGHT + CURSOR_EXTEND));
+    cursorLine.setAttribute("visibility", "visible");
+  }
+
+  /**
+   * 時刻に合った、五線譜の上の位置を求める関数（ステップE-2：moveCursor から取り出した）
+   * 時刻の前後の目じるしの間を、時間の割合で求める。
+   * @param {number} time - 時刻（秒）
+   * @returns {{x: number, top: number, measure: number}|null} 横の位置・その段の五線の上端・小節の番号。目じるしがないときは null
+   */
+  function cursorPositionAt(time) {
+    if (cursorPoints.length === 0) {
+      return null;
+    }
+
     // time より前（同じ時刻も）の、いちばん後ろの目じるしの番号を探す（ふつうは前回の続きなので、手がかりから進める）
     if (cursorSearchIndex >= cursorPoints.length || cursorPoints[cursorSearchIndex].time > time) {
       cursorSearchIndex = 0; // 時刻が戻ったとき（くり返しの2回目など）は、最初から探す
@@ -286,12 +565,7 @@
       const rate = Math.min(1, (time - from.time) / (to.time - from.time));
       x = from.x + (to.x - from.x) * rate;
     }
-
-    cursorLine.setAttribute("x1", String(x));
-    cursorLine.setAttribute("x2", String(x));
-    cursorLine.setAttribute("y1", String(from.top - CURSOR_EXTEND));
-    cursorLine.setAttribute("y2", String(from.top + STAFF_HEIGHT + CURSOR_EXTEND));
-    cursorLine.setAttribute("visibility", "visible");
+    return { x: x, top: from.top, measure: from.measure };
   }
 
   /**
@@ -550,25 +824,54 @@
 
 <!-- 五線譜が入る枠 -->
 <!-- maxHeight があるときは、枠の高さに上限を付けて、はみ出した分は枠の中で縦にスクロールする（ステップB） -->
-<div class="staff-view" bind:this={wrapper} style:max-height={maxHeight} style:overflow-y={maxHeight !== null ? "auto" : null}>
+<!-- （ステップE-2：流れるモードでは、高さの上限もスクロールも使わない） -->
+<div class="staff-view" class:flow bind:this={wrapper} style:max-height={flow ? null : maxHeight} style:overflow-y={!flow && maxHeight !== null ? "auto" : null}>
   <!-- VexFlow の読み込み中だけ、案内を出す -->
   {#if VF === null}
     <p class="loading">楽譜を準備しています…</p>
   {/if}
 
-  <!-- ここに五線譜（SVG）が描かれる。タップすると、その音符を使う側に伝える（ステップB） -->
-  <!-- キーボードでの操作は、練習ページの「前の音」「次の音」ボタンで行えるので、ここでは受け取らない -->
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="staff-canvas" class:tappable={onselect !== null} bind:this={container} onclick={handleClick}></div>
+  {#if flow}
+    <!-- ===== 流れるモード（ステップE-2）：上の帯（今）と下の帯（続き） ===== -->
+    <!-- 上の帯：五線譜（1本の帯）と重ねる層を、左へずらして流す。左端に札、決まった位置に縦線 -->
+    <!-- 演奏していないときは、指（マウス）で左右にずらして、先の所を見られる（ステップE-2） -->
+    <div class="flow-view" class:browsable={flowBrowsable} onpointerdown={handlePointerDown} onpointermove={handlePointerMove} onpointerup={handlePointerUp} onpointercancel={handlePointerUp}>
+      <div class="flow-row" bind:this={flowRow} style:height="{flowRowHeight}px">
+        <div class="flow-track" bind:this={upperTrack}>
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div class="staff-canvas" class:tappable={onselect !== null} bind:this={container} onclick={handleClick}></div>
+          <svg class="overlay" id="{uid}-overlay" bind:this={overlay} aria-hidden="true"></svg>
+        </div>
+        <div class="flow-label" bind:this={upperLabel}></div>
+        <div class="flow-cursor" bind:this={flowCursor}></div>
+      </div>
 
-  <!-- 重ねる層：五線譜の上にぴったり重ねる透明な SVG（ステップC-1） -->
-  <!-- pointer-events: none（下の style）で、タップは下の五線譜に通す -->
-  <svg class="overlay" bind:this={overlay} aria-hidden="true"></svg>
+      <!-- 下の帯：上の帯と同じ絵を <use> で指して出し、上の帯の続きの所までずらす -->
+      <div class="flow-row lower" style:height="{flowRowHeight}px">
+        <div class="flow-track" bind:this={lowerTrack}>
+          <svg bind:this={lowerSvg} aria-hidden="true">
+            <use href="#{uid}-main" />
+            <use href="#{uid}-overlay" />
+          </svg>
+        </div>
+        <div class="flow-label" bind:this={lowerLabel}></div>
+      </div>
+    </div>
+  {:else}
+    <!-- ここに五線譜（SVG）が描かれる。タップすると、その音符を使う側に伝える（ステップB） -->
+    <!-- キーボードでの操作は、練習ページの「前の音」「次の音」ボタンで行えるので、ここでは受け取らない -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="staff-canvas" class:tappable={onselect !== null} bind:this={container} onclick={handleClick}></div>
 
-  <!-- 流れる縦線の層（ステップC-2）。縦線は1本だけ作っておき、位置だけを動かす -->
-  <svg class="overlay" bind:this={cursorLayer} aria-hidden="true">
-    <line bind:this={cursorLine} stroke={CURSOR_COLOR} stroke-width={CURSOR_WIDTH} stroke-linecap="round" visibility="hidden" />
-  </svg>
+    <!-- 重ねる層：五線譜の上にぴったり重ねる透明な SVG（ステップC-1） -->
+    <!-- pointer-events: none（下の style）で、タップは下の五線譜に通す -->
+    <svg class="overlay" bind:this={overlay} aria-hidden="true"></svg>
+
+    <!-- 流れる縦線の層（ステップC-2）。縦線は1本だけ作っておき、位置だけを動かす -->
+    <svg class="overlay" bind:this={cursorLayer} aria-hidden="true">
+      <line bind:this={cursorLine} stroke={CURSOR_COLOR} stroke-width={CURSOR_WIDTH} stroke-linecap="round" visibility="hidden" />
+    </svg>
+  {/if}
 </div>
 
 <style>
@@ -594,6 +897,58 @@
     position: absolute;
     pointer-events: none;
     overflow: visible;
+  }
+
+  /* ===== 流れるモード（ステップE-2） ===== */
+
+  /* 流れるモードの枠：横にはスクロールしない（帯の位置は、プログラムで動かす） */
+  .staff-view.flow {
+    overflow: hidden;
+  }
+
+  /* 上下の帯をまとめた所：横にずらせるときは、つかむ形のカーソルにする（ステップE-2） */
+  /* touch-action: pan-y で、縦の指の動きはページのスクロールに、横の動きはこの部品にまかせる */
+  .flow-view.browsable {
+    cursor: grab;
+    touch-action: pan-y;
+  }
+
+  /* 帯1本ぶんの枠：はみ出した所は見せない */
+  .flow-row {
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* 下の帯：上の帯との間に、うすい線を引く */
+  .flow-row.lower {
+    border-top: 1px dashed #e0e0e0;
+  }
+
+  /* 帯の動く部分：左上に置き、位置は transform でずらす（will-change で、動かす準備をブラウザに知らせておく） */
+  .flow-track {
+    position: absolute;
+    left: 0;
+    will-change: transform;
+  }
+
+  /* 札（音部記号と調号）：帯の左端に、白い地で重ねて固定する */
+  .flow-label {
+    position: absolute;
+    left: 0;
+    background-color: white;
+    pointer-events: none;
+  }
+
+  /* 止まっている縦線（上の帯の決まった位置） */
+  .flow-cursor {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    margin-left: -1px;
+    background-color: #e65100;
+    border-radius: 1px;
+    pointer-events: none;
   }
 
   /* 読み込み中の案内 */

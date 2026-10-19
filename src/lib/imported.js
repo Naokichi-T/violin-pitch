@@ -717,3 +717,21 @@ function recordBest(id, field, points) {
   // 更新しなかったとき：これまでの最高点をそのまま返す
   return { bestScore: previousBest, isNewRecord: false };
 }
+
+/**
+ * 流れるモードの幅の倍率を、その楽譜に保存する関数（ステップE-2）
+ * 倍率は、読み込んだ楽譜の中に flowScale という名前で入れておく（曲によって、ちょうどいい幅が違うため）。
+ * @param {string} id - 楽譜の id
+ * @param {number} scale - 幅の倍率（1 なら自動で決めた幅のまま）
+ * @returns {boolean} 保存できたら true
+ */
+export function saveFlowScale(id, scale) {
+  // 今の一覧を読み込んで、楽譜を探す
+  const scores = loadImportedScores();
+  const score = scores.find((item) => item.id === id);
+  if (score === undefined) {
+    return false;
+  }
+  score.flowScale = scale;
+  return writeImportedScores(scores);
+}

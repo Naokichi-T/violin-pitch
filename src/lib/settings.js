@@ -543,3 +543,34 @@ export function saveImportedSymbolsVisible(visible) {
     // 保存領域を使えないときは、何もしない（次に開いたときは最初の設定になる）
   }
 }
+
+// ===== 読み込んだ楽譜の「通し」の、楽譜の見せ方（ステップE-2） =====
+
+// 楽譜の見せ方（"normal"：ふつう、"flow"：流れる）を保存するときの名前（キー）
+const RUN_VIEW_MODE_KEY = "violin-pitch:runViewMode";
+
+/**
+ * 保存しておいた「通し」の楽譜の見せ方を読み込む関数（ステップE-2）
+ * @returns {string} "normal"（ふつう）か "flow"（流れる）。保存していないときは "normal"
+ */
+export function loadRunViewMode() {
+  try {
+    // 「flow」と保存してあるときだけ流れる。それ以外はふつう
+    return localStorage.getItem(RUN_VIEW_MODE_KEY) === "flow" ? "flow" : "normal";
+  } catch (error) {
+    // 保存領域を使えないときは、最初の設定（ふつう）
+    return "normal";
+  }
+}
+
+/**
+ * 「通し」の楽譜の見せ方をブラウザに保存する関数（ステップE-2）
+ * @param {string} mode - "normal"（ふつう）か "flow"（流れる）
+ */
+export function saveRunViewMode(mode) {
+  try {
+    localStorage.setItem(RUN_VIEW_MODE_KEY, mode);
+  } catch (error) {
+    // 保存領域を使えないときは、何もしない
+  }
+}
