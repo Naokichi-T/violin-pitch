@@ -40,7 +40,8 @@
   import { LEVELS, DEFAULT_LEVEL_ID, getLevel } from "#lib/level.js";
 
   // 「じっくり」モードの練習の部品を読み込む（五線譜の部分は、このページから差し替える）
-  import StepPractice from "#lib/StepPractice.svelte";
+  // （1画面に収める手直し：「じっくり」の五線譜の枠の高さの上限 STEP_STAFF_HEIGHT も、いっしょに読み込む）
+  import StepPractice, { STEP_STAFF_HEIGHT } from "#lib/StepPractice.svelte";
 
   // 読み込んだ楽譜の五線譜を描く部品を読み込む
   import ImportedStaff from "#lib/ImportedStaff.svelte";
@@ -73,8 +74,9 @@
   const TARGET_COLOR = "#1976d2"; // 今の目標の音・区間を選ぶときに1回目にタップした音（明るい青）
   const PASSED_COLOR = "#2e7d32"; // 通過した音（緑）
 
-  // 「じっくり」のときの、五線譜の枠の高さの上限
-  // 画面の4割くらいにして、下のメーターがいつも見えるようにする（横向きのスマホでも小さくなりすぎないように、220px より低くはしない）
+  // 「通し」を始める前・終わったあとの、五線譜の枠の高さの上限
+  // 画面の4割くらいにして、下のボタンがいつも見えるようにする（横向きのスマホでも小さくなりすぎないように、220px より低くはしない）
+  // （1画面に収める手直し：「じっくり」では、StepPractice の STEP_STAFF_HEIGHT を使うようにした）
   const STAFF_HEIGHT_PRACTICE = "max(40vh, 220px)";
 
   // 区間を選ぶときの、五線譜の枠の高さの上限（選ぶときは楽譜を広く見たいので、少し高くする）
@@ -494,13 +496,15 @@
 
 <!-- 「じっくり」の部品に渡す、五線譜の描き方（ステップB） -->
 <!-- 「じっくり」の部品から、今の目標の音の番号・通過した音・目標を変える関数を受け取って、読み込んだ楽譜の五線譜を描く -->
-{#snippet importedStaff(targetIndex, passed, setTarget)}
+<!-- （1画面に収める手直しの続き：「練習を始める」を押すたびに増える数 scrollRequest も受け取って、目標の音の段までスクロールする） -->
+{#snippet importedStaff(targetIndex, passed, setTarget, scrollRequest)}
   <ImportedStaff
     score={renderScoreData}
     noteColors={practiceColors(targetIndex, passed)}
     focus={practiceTargets[targetIndex]?.positions[0] ?? null}
     bands={practiceTargets[targetIndex]?.positions ?? []}
-    maxHeight={STAFF_HEIGHT_PRACTICE}
+    maxHeight={STEP_STAFF_HEIGHT}
+    {scrollRequest}
     measureRange={displayRange}
     onselect={(position) => selectFromStaff(position, targetIndex, setTarget)}
   />

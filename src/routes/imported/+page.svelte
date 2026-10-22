@@ -241,6 +241,9 @@
     <h1>読み込んだ楽譜</h1>
   </div>
 
+  <!-- このページでできることの説明：音程に加えて、リズムも判定することを伝える -->
+  <p class="lead">MusicXML の楽譜を読み込んで練習できます。「じっくり」では1音ずつ音程を、「通し」ではテンポに合わせて弾いた音程とリズム（弾き始めのタイミング）を判定して、点数を出します。</p>
+
   <!-- 読み込むボタン（ファイルを読んでいる最中は押せない） -->
   <button class="import-button" disabled={isReading} onclick={chooseFile}>
     {isReading ? "読み込み中…" : "MusicXMLを読み込む"}
@@ -415,6 +418,14 @@
   }
 
   /* 説明：小さくグレーで表示する */
+  /* ページの説明：見出しと読み込むボタンの間に置く */
+  .lead {
+    margin: 0 0 12px 0;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: #424242;
+  }
+
   .hint {
     margin: 6px 0 0 0;
     font-size: 0.8rem;

@@ -40,6 +40,8 @@
   // focus       ：見えるようにしたい音符の場所 { measure, note }（ステップB）
   //               この音符の段が枠の外にあるときは、枠の中を自動でスクロールして見せる。省略したら何もしない
   //               （ステップC-1：focus が変わっても、五線譜は描き直さない（スクロールだけする））
+  // scrollRequest：この数が増えたら、focus の音符の段を、見えていても枠のいちばん上に置き直す（「じっくり」で練習を始めたとき）
+  //               （手で先の段を見ていても、練習する所に戻すため）（1画面に収める手直しの続き）。省略したら 0
   // maxHeight   ：枠の高さの上限（CSS の書き方。例："40vh"）（ステップB）
   //               これより高い楽譜は、枠の中でスクロールする。省略したら上限なし（楽譜の高さのまま）
   // bands       ：後ろに帯を敷く音符の場所の配列 [{ measure, note }, ...]（ステップB-2）
@@ -65,6 +67,7 @@
     noteColors = new Map(),
     onselect = null,
     focus = null,
+    scrollRequest = 0,
     maxHeight = null,
     bands = [],
     overlayBands = [],
@@ -233,6 +236,29 @@
     }
   });
 
+  // ②-2 練習を始めたときの自動スクロールの係：scrollRequest が増えたときだけ動く（1画面に収める手直しの続き）
+  $effect(() => {
+    if (scrollRequest === 0) {
+      return; // まだ一度も練習を始めていない
+    }
+    untrack(() => {
+      if (focus === null || flow || wrapper === null) {
+        return;
+      }
+      // 目標の音が1段目にあるときは、枠のいちばん上（テンポの文字なども見える所）までスクロールする（楽譜の先頭を見せる）
+      const box = hitBoxes.find((item) => item.measure === focus.measure && item.note === focus.note);
+      const firstLineTop = Math.min(...hitBoxes.map((item) => item.lineTop));
+      if (box !== undefined && box.lineTop === firstLineTop) {
+        lastScrolledLineTop = box.lineTop;
+        wrapper.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      // 2段目より後のときは、前にスクロールした段を忘れて（null）から、その段を枠のいちばん上に置き直す
+      lastScrolledLineTop = null;
+      scrollToNote(focus);
+    });
+  });
+
   // ③ 重ねる層の係：帯・印か、描いた回数が変わったときに、重ねる層だけを描き直す（ステップC-1）
   $effect(() => {
     const bandsToDraw = overlayBands;
@@ -265,6 +291,7 @@
   // ⑥ 流れるモードで、帯を流す係：時刻が変わるたびに、帯の位置だけを変える（ステップE-2）
   // （横にずらした量 browseOffset も moveFlow の中で読んでいるので、ずらしたときにも動く）
   $effect(() => {
+    browseOffset;
     moveFlow(flowTime, cursorTime);
   });
 

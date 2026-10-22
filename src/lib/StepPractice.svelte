@@ -1,3 +1,12 @@
+<script module>
+  // 「じっくり」の五線譜の枠の高さの上限（CSS の書き方）（1画面に収める手直し）
+  // 画面の高さ（100dvh）から、五線譜の下に並ぶもの（目標の音・メーター・判定・ボタン）の高さを引いた分を、五線譜に使う。
+  // 練習を始めたときに五線譜を画面のいちばん上に動かすので、五線譜から「目標の音を聴く」までが1画面に収まる。
+  // 画面がとても低いときでも、五線譜が1段（約120px）は見えるように、下限を 150px にする。
+  // 読み込んだ楽譜の練習ページでも、同じ高さを使う（export して、そちらから読み込む）
+  export const STEP_STAFF_HEIGHT = "max(calc(100dvh - 380px), 150px)";
+</script>
+
 <script>
   // 「じっくり」モードの練習の部品
   // 目標の音を1つずつ表示し、マイクの音とのズレをメーターで見せる。
@@ -6,7 +15,8 @@
 
   // onMount：この部品が画面に表示された直後に処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
-  import { onMount, onDestroy } from "svelte";
+  // tick：画面の書き換えが終わるのを待つための仕組み（1画面に収める手直し）
+  import { onMount, onDestroy, tick } from "svelte";
 
   // 音のデータを表示用の文字にする関数を読み込む
   import { noteToText } from "#lib/score.js";
@@ -46,6 +56,8 @@
   //                    targetIndex … 今の目標の音が何番目か（0から）
   //                    passed      … 通過した音の位置に true が入った配列
   //                    setTarget   … 目標の音を変える関数（音符をタップしたときに、番号を渡して呼ぶ）
+  //                    scrollRequest … 「練習を始める」を押すたびに1増える数（増えたら、五線譜の枠の中を目標の音の段までスクロールする）
+  //                                    （1画面に収める手直しの続き）
   //                  null が初期値（渡されなかったとき）
   let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled, staff = null } = $props();
 
@@ -227,6 +239,15 @@
 
       // 聴いている状態にする
       isListening = true;
+
+      // 五線譜が画面のいちばん上に来るようにスクロールする（メーターなどが出てから動かす）（1画面に収める手直し）
+      await tick();
+      scrollPracticeToTop();
+
+      // 五線譜の枠の中も、目標の音の段までスクロールする（手で先の段を見ていても、練習する所に戻す）
+      // 読み込んだ楽譜の五線譜には、数を増やして知らせる。今までの五線譜は、ここで動かす
+      scrollRequest = scrollRequest + 1;
+      scrollStaffToTarget(true);
     } catch (error) {
       // 許可を拒否された場合や、マイクが見つからない場合はここに来る
       // どんなエラーかは、microphone.js が日本語のメッセージにしてくれている
@@ -503,16 +524,83 @@
     muteUntil = performance.now() + MUTE_MILLISECONDS;
     detectedFrequency = null;
   }
+
+  // ===== 1画面に収める（1画面に収める手直し） =====
+
+  // 練習の部品のいちばん上（五線譜のすぐ上）に置く目じるしの要素。練習を始めたときに、ここを画面の上に合わせる
+  let practiceTop = $state(null);
+
+  // 今までの五線譜（Staff）を入れる枠の要素。高さに上限を付けて、はみ出した分は枠の中で縦にスクロールする
+  // （読み込んだ楽譜の五線譜は、自分でスクロールするので使わない）
+  let staffBox = $state(null);
+
+  /**
+   * 練習の部品のいちばん上が、画面のいちばん上に来るようにページをスクロールする関数
+   * 「練習を始める」を押してマイクが使えるようになったときに呼ぶ。
+   * これで、五線譜から「目標の音を聴く」ボタンまでが、1つの画面に収まって見える。
+   */
+  function scrollPracticeToTop() {
+    if (practiceTop === null) {
+      return;
+    }
+    // block: "start" … 要素の上端を、画面の上端に合わせる
+    practiceTop.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // 「練習を始める」を押すたびに1増える数。読み込んだ楽譜の五線譜に渡して、目標の音の段までスクロールしてもらう
+  let scrollRequest = $state(0);
+
+  // 今までの五線譜の枠の中で、目標の音の段が見えるようにスクロールする係
+  // targetIndex（目標の音）が変わるたびに動く
+  $effect(() => {
+    targetIndex; // 目標の音が変わったら動くように、読んでおく
+    scrollStaffToTarget(false);
+  });
+
+  /**
+   * 今までの五線譜の枠の中で、目標の音の段が見えるようにスクロールする関数
+   * @param {boolean} force - true なら、段が見えていても、その段を枠のいちばん上に置く（「練習を始める」を押したとき）。
+   *                          false なら、段が枠からはみ出しているときだけ動かす（目標の音が変わったとき）
+   */
+  function scrollStaffToTarget(force) {
+    if (staffBox === null) {
+      return;
+    }
+    const box = staffBox;
+    // 画面の書き換え（目標の音の青い帯）が終わってから調べる
+    tick().then(() => {
+      // 目標の音（青い帯の付いた音符）の段（1段ぶんの SVG）を探す
+      const row = box.querySelector(".note.selected")?.closest("svg");
+      if (row === null || row === undefined) {
+        return;
+      }
+      // 枠の中での、段の上端と下端の位置
+      const boxRect = box.getBoundingClientRect();
+      const rowRect = row.getBoundingClientRect();
+      const rowTop = rowRect.top - boxRect.top + box.scrollTop;
+      const rowBottom = rowTop + rowRect.height;
+      // 段が枠から上か下にはみ出していたら（force のときはいつも）、その段を枠のいちばん上に置く
+      if (force || rowTop < box.scrollTop || rowBottom > box.scrollTop + box.clientHeight) {
+        box.scrollTo({ top: rowTop, behavior: "smooth" });
+      }
+    });
+  }
 </script>
 
 <!-- 五線譜（目標の音を、編集ページの「選択中」と同じ青で表示する） -->
 <!-- passed を渡して、通過した音符を緑で表示する -->
 <!-- 音符をタップすると、その音を目標にする -->
 <!-- （ステップB：使う側から staff を渡されたときは、そちらで描く。読み込んだ楽譜の練習ページで使う） -->
+<!-- 練習を始めたときに、ここ（五線譜のすぐ上）を画面のいちばん上に合わせる（1画面に収める手直し） -->
+<div class="practice-top" bind:this={practiceTop}></div>
+
 {#if staff !== null}
-  {@render staff(targetIndex, passed, setTarget)}
+  {@render staff(targetIndex, passed, setTarget, scrollRequest)}
 {:else}
-  <Staff {notes} signature={currentKey.signature} selectedIndex={targetIndex} {passed} onselect={setTarget} />
+  <!-- 今までの五線譜は、高さに上限を付けた枠に入れる。音が多くて段が増えたら、枠の中でスクロールする（1画面に収める手直し） -->
+  <div class="staff-box" bind:this={staffBox} style:max-height={STEP_STAFF_HEIGHT}>
+    <Staff {notes} signature={currentKey.signature} selectedIndex={targetIndex} {passed} onselect={setTarget} />
+  </div>
 {/if}
 
 <!-- 目標の音の表示 -->
@@ -604,17 +692,18 @@
   <button class="listening-button start" onclick={startListening}>練習を始める（マイクを使います）</button>
 {/if}
 
-<!-- 目標の音を手動で動かすボタン -->
+<!-- 目標の音を手動で動かすボタンと、目標の音をお手本として鳴らすボタンを、1行に並べる（1画面に収める手直し） -->
 <div class="move-row">
   <!-- 最初の音が目標のときは、これより前に動かせないので押せない -->
-  <button class="move-button" disabled={targetIndex === 0} onclick={() => setTarget(targetIndex - 1)}> ◀ 前の音 </button>
+  <!-- aria-label は、読み上げで操作する人のための、ボタンの説明（ボタンの文字を短くしたので付ける） -->
+  <button class="move-button" disabled={targetIndex === 0} onclick={() => setTarget(targetIndex - 1)} aria-label="前の音"> ◀ 前 </button>
+
+  <!-- 目標の音をお手本として鳴らすボタン（まん中に、いちばん広く置く） -->
+  <button class="listen-button" onclick={playTarget}>♪ 目標の音を聴く</button>
 
   <!-- 最後の音が目標のときは、これより後に動かせないので押せない -->
-  <button class="move-button" disabled={targetIndex === notes.length - 1} onclick={() => setTarget(targetIndex + 1)}> 次の音 ▶ </button>
+  <button class="move-button" disabled={targetIndex === notes.length - 1} onclick={() => setTarget(targetIndex + 1)} aria-label="次の音"> 次 ▶ </button>
 </div>
-
-<!-- 目標の音をお手本として鳴らすボタン -->
-<button class="listen-button" onclick={playTarget}>♪ 目標の音を聴く</button>
 
 <!-- あまり使わない設定：ふだんはたたんでおき、「設定」を押したときだけ開く -->
 <details class="settings">
@@ -630,6 +719,19 @@
 </details>
 
 <style>
+  /* 練習を始めたときに画面の上に合わせる目じるし（高さはない）（1画面に収める手直し） */
+  /* scroll-margin-top で、画面のいちばん上から少しだけ間をあける */
+  .practice-top {
+    scroll-margin-top: 8px;
+  }
+
+  /* 今までの五線譜を入れる枠：高さの上限（style:max-height）を超えたら、枠の中で縦にスクロールする（1画面に収める手直し） */
+  /* position: relative は、中の段の位置を、この枠から測るため */
+  .staff-box {
+    position: relative;
+    overflow-y: auto;
+  }
+
   /* 目標の音のエリア：中央に寄せる */
   .target-area {
     margin-top: 4px;
@@ -646,7 +748,9 @@
   /* 目標の音名：一番大きく表示する */
   .target-name {
     margin: 0;
-    font-size: 3rem;
+    /* 1画面に収めるため、3rem から少し小さくした（1画面に収める手直し） */
+    font-size: 2.4rem;
+    line-height: 1.15;
     font-weight: bold;
     /* 五線譜の目標の音と同じ、濃い青にする */
     color: #0d47a1;
@@ -663,7 +767,7 @@
 
   /* メーターのエリア：目標の音の表示から少し離す */
   .meter-area {
-    margin-top: 12px;
+    margin-top: 6px;
   }
 
   /* ゲージの枠（グレー）：OK を保てている時間を表示する棒の、背景になる部分 */
@@ -731,7 +835,8 @@
   /* 判定の結果（OK・低い・高い）：大きく表示する */
   .judgement-text {
     margin: 0;
-    font-size: 1.8rem;
+    /* 1画面に収めるため、1.8rem から少し小さくした（1画面に収める手直し） */
+    font-size: 1.5rem;
     font-weight: bold;
   }
 
@@ -752,7 +857,7 @@
   /* 「練習を始める」「やめる」ボタン：横幅いっぱいに表示する */
   button.listening-button {
     width: 100%;
-    margin-top: 12px;
+    margin-top: 8px;
     color: white;
     border: none;
   }
@@ -788,18 +893,20 @@
     cursor: not-allowed;
   }
 
-  /* 「前の音」「次の音」ボタン：白地に青い枠。2つで横幅を半分ずつ使う */
+  /* 「前」「次」ボタン：白地に青い枠。まん中の「目標の音を聴く」より狭くする（1画面に収める手直し） */
   button.move-button {
     flex: 1;
+    /* 文字が「前」「次」だけになったので、狭い画面でも縮みすぎないよう、最低の幅を決める */
+    min-width: 64px;
     color: #1976d2;
     background-color: white;
     border: 2px solid #1976d2;
   }
 
-  /* 「目標の音を聴く」ボタン：緑。横幅いっぱいに表示する */
+  /* 「目標の音を聴く」ボタン：緑。「前」「次」の間に、いちばん広く置く（1画面に収める手直し） */
+  /* flex: 2 … 「前」「次」の2倍の幅を使う */
   button.listen-button {
-    width: 100%;
-    margin-top: 8px;
+    flex: 2;
     color: white;
     background-color: #2e7d32;
     border: none;
