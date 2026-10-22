@@ -1,4 +1,5 @@
 // リズムの判定のために、マイクの記録から「音の出だし」の時刻を見つけるファイル（ステップD）
+// （ステップE-3：rit.・フェルマータのあとなどで OK の範囲を広げた音は、探す範囲も広げるようにした）
 // 読み込んだ楽譜の「通し」（ImportedRunPractice.svelte）で使う。
 //
 // 【マイクの記録の形】（演奏中に、1秒に約60回ためていくもの）
@@ -35,6 +36,10 @@ const SEARCH_BEFORE = 0.25;
 // お手本の始まりの、何秒後まで探すか（その音の長さの7割まで）
 const SEARCH_AFTER = 0.35;
 const SEARCH_AFTER_RATIO = 0.7;
+
+// OK の範囲を広げた音で、OK の範囲よりどれだけ先まで探すか（秒）（ステップE-3）
+// （OK の範囲ぎりぎりで弾いた出だしも、見つけられるようにするため）
+const SEARCH_MARGIN = 0.05;
 
 // 「目標の高さ」とみなす範囲（セント）。音程が少しずれていても、出だしは見つけたいので、広めにする
 const PITCH_MATCH_CENTS = 70;
@@ -104,12 +109,18 @@ function centsBetween(a, b) {
  * @param {number} targetFrequency - 目標の高さ（Hz）
  * @param {number[]} clickTimes - メトロノームのクリックを鳴らした時刻（秒）の並び（鳴らしていなければ空）
  * @param {number|null} previousOnset - ひとつ前の音の、見つかった出だしの時刻（秒）。分からないときは null（ステップD-5）
+ * @param {number} tolerance - この音の、リズムの OK とする範囲（秒）（ステップE-3）
+ *                             rit.・フェルマータのあとなどで広げた音では、探す範囲も、OK の範囲より少し先まで広げる
+ *                             （ただし、前の音の長さの半分・この音の長さの7割は超えない。前後の音と取り違えないように）
+ *                             省略したら 0（今までどおりの探す範囲）
  * @returns {number|null} 出だしの時刻（秒。時刻表と同じ数え方）。見つからないときは null
  */
-export function findOnset(frames, item, previous, targetFrequency, clickTimes, previousOnset = null) {
-  // 探す範囲
-  const before = previous !== null ? Math.min(SEARCH_BEFORE, (previous.end - previous.start) * 0.5) : SEARCH_BEFORE;
-  const after = Math.min(SEARCH_AFTER, (item.end - item.start) * SEARCH_AFTER_RATIO);
+export function findOnset(frames, item, previous, targetFrequency, clickTimes, previousOnset = null, tolerance = 0) {
+  // 探す範囲（ステップE-3：OK の範囲が広いときは、OK の範囲より SEARCH_MARGIN だけ先まで探す）
+  const searchBefore = Math.max(SEARCH_BEFORE, tolerance + SEARCH_MARGIN);
+  const searchAfter = Math.max(SEARCH_AFTER, tolerance + SEARCH_MARGIN);
+  const before = previous !== null ? Math.min(searchBefore, (previous.end - previous.start) * 0.5) : searchBefore;
+  const after = Math.min(searchAfter, (item.end - item.start) * SEARCH_AFTER_RATIO);
   const from = item.start - before;
   const to = item.start + after;
 

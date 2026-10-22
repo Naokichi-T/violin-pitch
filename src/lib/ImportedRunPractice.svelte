@@ -37,6 +37,12 @@
   // 【楽譜の見せ方】（ステップE-2）
   // 「ふつう」（改行した楽譜）と「流れる」（1本の帯が右から左へ流れる。上が今、下が続き）を選べる。選んだほうはブラウザに覚えておく。
   // 「流れる」でも、結果を見るとき（最後まで弾いたあと・途中でやめて結果があるとき）は、ふつうの楽譜に戻して見せる。
+  //
+  // 【リズムを甘くする所】（ステップE-3）
+  // rit.・accel.（「遅くする」「速くする」の自由な文字も）の範囲の中の音と、フェルマータのすぐ次の音は、
+  // 時刻表の倍率（rhythmFactor）だけ、リズムの OK の範囲を広げる（範囲の中は進むほど広げる：2倍 → 4倍。フェルマータの次は4倍）。
+  // 点数は「ずれ ÷ 倍率」で出す（広げた範囲の中で同じ割合のずれなら、ふつうの所と同じ点数）。
+  // 結果の札には、甘くした理由の印（rit.・rall.・𝄐 など）を付ける。
 
   // onMount：この部品が画面に表示されたときに1回だけ処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -323,7 +329,21 @@
   let totalScore = $derived(getTotalScore(judgedCents));
 
   // リズムを判定した音のずれ（秒）の並び（判定しない音を除く。見つからない音は null）（ステップD）
-  let judgedSeconds = $derived(rhythmResults.filter((result) => result !== undefined && result.status !== "skip").map((result) => result.seconds));
+  // （ステップE-3：甘くした音は、ずれを倍率で割った値にする（点数を出すときに、ふつうの音と同じ割合で数えるため））
+  let judgedSeconds = $derived(rhythmResults.filter((result) => result !== undefined && result.status !== "skip").map((result) => scoredSeconds(result)));
+
+  /**
+   * リズムの結果から、点数を出すのに使うずれ（秒）を返す関数（ステップE-3）
+   * 甘くした音（倍率 factor が 1 より大きい音）は、ずれを倍率で割る。見つからない音は null のまま。
+   * @param {{seconds: number|null, factor?: number}} result - リズムの結果
+   * @returns {number|null} 点数を出すのに使うずれ（秒）
+   */
+  function scoredSeconds(result) {
+    if (result.seconds === null) {
+      return null;
+    }
+    return result.seconds / (result.factor ?? 1);
+  }
 
   // リズムの全体の点数（ステップD）
   let rhythmScore = $derived(getRhythmTotalScore(judgedSeconds));
@@ -934,21 +954,26 @@
     // 音程が外れた音の出だしを探すとき、ひとつ前の音の弾き始めと間違えないようにするために渡す
     const previousResult = index > 0 ? rhythmResults[index - 1] : undefined;
     const previousOnset = previousResult !== undefined && typeof previousResult.seconds === "number" ? previous.start + previousResult.seconds : null;
-    const onset = findOnset(frames, item, previous, targetFrequency, playedClickTimes, previousOnset);
+    // この音の OK の範囲（ステップE-3：rit.・フェルマータのあとなどは、時刻表の倍率だけ広げる）
+    const factor = item.rhythmFactor ?? 1;
+    const tolerance = rhythmTolerance * factor;
+    const label = item.rhythmLabel ?? null; // 甘くした理由の印（結果の札に出す）
+    // 広げた音では、出だしを探す範囲も広げる（tolerance を渡す）
+    const onset = findOnset(frames, item, previous, targetFrequency, playedClickTimes, previousOnset, tolerance);
     if (onset === null) {
-      rhythmResults[index] = { status: "missing", seconds: null };
+      rhythmResults[index] = { status: "missing", seconds: null, factor: factor, label: label };
       return;
     }
 
     // お手本の始まりとのずれ（秒。マイナスは早い）で決める
     const seconds = onset - item.start;
     let status = "ok";
-    if (seconds < -rhythmTolerance) {
+    if (seconds < -tolerance) {
       status = "early";
-    } else if (seconds > rhythmTolerance) {
+    } else if (seconds > tolerance) {
       status = "late";
     }
-    rhythmResults[index] = { status: status, seconds: seconds };
+    rhythmResults[index] = { status: status, seconds: seconds, factor: factor, label: label };
   }
 
   /**
@@ -1098,7 +1123,11 @@
         {:else}
           {RHYTHM_STYLES[rhythm.status].label}
           {#if rhythm.seconds !== null}
-            {rhythm.seconds >= 0 ? "+" : "−"}{Math.abs(rhythm.seconds).toFixed(2)}秒・{secondsToPoints(rhythm.seconds)}点
+            {rhythm.seconds >= 0 ? "+" : "−"}{Math.abs(rhythm.seconds).toFixed(2)}秒・{secondsToPoints(scoredSeconds(rhythm))}点
+          {/if}
+          <!-- 甘くした音には、その理由の印を付ける（rit.・rall.・𝄐 など）（ステップE-3） -->
+          {#if rhythm.label}
+            <span class="loose-label">（{rhythm.label}）</span>
           {/if}
         {/if}
       {/if}
@@ -1299,6 +1328,13 @@
   }
 
   /* 「音符をタップすると…」の案内 */
+  /* 結果の札の、リズムを甘くした理由の印（rit.・𝄐 など）：斜めの小さな文字（ステップE-3） */
+  .loose-label {
+    font-size: 0.85em;
+    font-style: italic;
+    color: #616161;
+  }
+
   .hint {
     margin: 8px 0 0 0;
     font-size: 0.8rem;

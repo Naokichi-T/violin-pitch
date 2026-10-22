@@ -2,6 +2,7 @@
 // （ステップC-2：流れる縦線の目じるし cursorKeys を足した）
 // （ステップC-3：お手本を鳴らすための、鳴らす音の並び sounds を足した）
 // （ステップD：音ごとに、リズムを判定するか（rhythm）と、出だしの見つけ方（method）を足した）
+// （ステップE-3：音ごとに、リズムの OK の範囲を何倍にするか（rhythmFactor）と、その印（rhythmLabel）を足した）
 // 「通し」で、判定する音ごとに「何秒から何秒まで鳴るか」を決める。
 // 時刻の計算は、楽譜作成アプリ（string-score）の再生の計算（playback.js の buildEvents）をそのまま使うので、
 // テンポの変化・rit.・accel.・a tempo・フェルマータ・カエスーラ・くり返し・アウフタクトが、再生とぴったり同じになる。
@@ -20,6 +21,11 @@
 //       method:    "pitch"                       … 出だしの見つけ方（ステップD。rhythm.js を参照）
 //                                                  "pitch"：目標の高さになった時刻（前の音と高さが違う・前が休符）
 //                                                  "volume"：音量が下がってまた上がった時刻（前の音と同じ高さで、つながっている）
+//       rhythmFactor: 1                          … リズムの OK の範囲を何倍にするか（ステップE-3。ふつうの音は 1）
+//                                                  rit.・accel.（「遅くする」「速くする」の自由な文字も）の範囲の中：
+//                                                    範囲の頭で 2倍 → 範囲の終わりで 4倍（進むほど広げる）
+//                                                  フェルマータの付いた音（休符も）のすぐ次の音：4倍
+//       rhythmLabel:  null                       … 甘くした理由の印（結果の札に出す。"rit."・"rall."・"𝄐" など。ふつうの音は null）
 //     }
 //   ],
 //   clicks: [{ time, strong }, ...]  … 拍の頭の時刻（秒）と、1拍目かどうか（カウントとメトロノームに使う）
@@ -160,6 +166,13 @@ export function buildTimeline(record, tempo, expandRepeats) {
   // お手本で鳴らす音の並び（ステップC-3）
   const sounds = buildSounds(record, result, tickSeconds);
 
+  // 音ごとに、リズムの OK の範囲を何倍にするかと、その印を決める（ステップE-3）
+  const loose = buildRhythmLoose(record, score, result, starts, targets);
+  items.forEach((item, index) => {
+    item.rhythmFactor = loose[index].factor;
+    item.rhythmLabel = loose[index].label;
+  });
+
   // 音ごとに、リズムを判定するかと、出だしの見つけ方を決める（ステップD）
   items.forEach((item, index) => {
     // この音と同じ時刻に始まる、鳴らす音（灰色の音も入っている並び）と、その1つ前の音
@@ -182,6 +195,104 @@ export function buildTimeline(record, tempo, expandRepeats) {
   });
 
   return { items: items, clicks: clicks, beatSeconds: beatSecondsAt(score, items, tickSeconds), cursorKeys: cursorKeys, sounds: sounds };
+}
+
+// ===== リズムを甘くする所（ステップE-3） =====
+
+// rit.・accel. の範囲の中で、OK の範囲を何倍にするか：範囲の頭で LOOSE_START 倍、範囲の終わりで LOOSE_END 倍
+// （弾く人の遅くなり方がお手本と違うと、ずれは範囲の中で1音ごとにたまっていくので、進むほど広げる）
+const LOOSE_START = 2;
+const LOOSE_END = 4;
+
+// フェルマータの付いた音（休符も）のすぐ次の音で、OK の範囲を何倍にするか
+// （フェルマータをどれだけのばすかは人によって違い、そのずれが次の音の出だしに一度に来るので、はじめから広くする）
+const LOOSE_AFTER_FERMATA = 4;
+
+// フェルマータの印（結果の札に出す）
+const FERMATA_LABEL = "𝄐";
+
+/**
+ * 判定する音ごとに、リズムの OK の範囲を何倍にするかと、甘くした理由の印を決める関数（このファイルの中だけで使う）（ステップE-3）
+ *   ・rit.・accel.（「遅くする」「速くする」の自由な文字も）の範囲の中の音：範囲の頭からどこまで進んだか（0〜1）で、
+ *     LOOSE_START 倍から LOOSE_END 倍まで広げる。くり返しで2回目に通ったときは、その回の範囲の頭と終わりで数える
+ *   ・フェルマータの付いた音（休符も）のすぐ次の音：LOOSE_AFTER_FERMATA 倍
+ *   ・「再生では変えない」の自由な文字（dolce など）の範囲は、ふつうのまま
+ * @param {object} record - 読み込んだ楽譜
+ * @param {object} score - テンポを変えた楽譜データ（楽譜作成アプリの形）
+ * @param {object} result - 鳴らす音の一覧（buildEvents の結果。measureStarts・totalTicks を使う）
+ * @param {(number|null)[]} starts - 判定する音ごとの、鳴り始める時刻（ティック）
+ * @param {object[]} targets - 判定する音の並び（buildTargets の結果。音符の場所 positions を使う）
+ * @returns {{factor: number, label: string|null}[]} 判定する音ごとの倍率と印（starts と同じ順番）
+ */
+function buildRhythmLoose(record, score, result, starts, targets) {
+  const measureStarts = result.measureStarts; // 鳴らす順の小節ごとの { measure, startTick }
+
+  // ① rit.・accel. の範囲を、鳴らす順に並べる { from: 始まりの時刻, to: 終わりの時刻（ティック）, label: 書いてある文字 }
+  //    範囲の始まりの小節から、範囲の終わりの印（gradualEnd）のある小節まで、小節が続けて鳴る間を1つの範囲とする
+  //    （くり返しで戻るなど、小節がとんだら、そこで範囲を終わりにする）
+  const ranges = [];
+  measureStarts.forEach((start, k) => {
+    const info = score.measures[start.measure];
+    if (info.gradual !== "rit" && info.gradual !== "accel") {
+      return;
+    }
+    let last = k; // 範囲の最後の小節（鳴らす順の番号）
+    while (!score.measures[measureStarts[last].measure].gradualEnd && last + 1 < measureStarts.length && measureStarts[last + 1].measure === measureStarts[last].measure + 1) {
+      last += 1;
+    }
+    const to = last + 1 < measureStarts.length ? measureStarts[last + 1].startTick : result.totalTicks;
+    ranges.push({ from: start.startTick, to: to, label: info.gradualText ?? (info.gradual === "rit" ? "rit." : "accel.") });
+  });
+
+  // ② 判定する音ごとに決める
+  return starts.map((tick, index) => {
+    if (tick === null) {
+      return { factor: 1, label: null };
+    }
+
+    // rit.・accel. の範囲の中か
+    const range = ranges.find((r) => tick >= r.from && tick < r.to);
+    if (range !== undefined) {
+      const progress = range.to > range.from ? (tick - range.from) / (range.to - range.from) : 0;
+      return { factor: LOOSE_START + (LOOSE_END - LOOSE_START) * progress, label: range.label };
+    }
+
+    // すぐ前の音符（休符も）にフェルマータが付いているか
+    if (previousHasFermata(record, measureStarts, targets[index].positions[0], tick)) {
+      return { factor: LOOSE_AFTER_FERMATA, label: FERMATA_LABEL };
+    }
+
+    return { factor: 1, label: null };
+  });
+}
+
+/**
+ * 判定する音のすぐ前の音符（休符も）に、フェルマータが付いているかを調べる関数（このファイルの中だけで使う）（ステップE-3）
+ * 同じ小節の中なら1つ前の音符、小節の最初の音符なら、鳴らす順で1つ前の小節の最後の音符を見る。
+ * @param {object} record - 読み込んだ楽譜
+ * @param {{measure: number, startTick: number}[]} measureStarts - 鳴らす順の小節ごとの始まり（buildEvents の結果）
+ * @param {{measure: number, note: number}} position - 判定する音の、最初の音符の場所
+ * @param {number} tick - 判定する音の、鳴り始める時刻（ティック。くり返しで何回目に通ったところかを見分けるのに使う）
+ * @returns {boolean} 付いていれば true
+ */
+function previousHasFermata(record, measureStarts, position, tick) {
+  if (position === undefined) {
+    return false;
+  }
+  const notes = record.partMeasures[position.measure].notes;
+  if (position.note > 0) {
+    return !!notes[position.note - 1].fermata;
+  }
+  // 小節の最初の音符：この回の小節（鳴らす順の番号）を探して、その1つ前の小節の最後の音符を見る
+  let k = -1;
+  measureStarts.forEach((start, i) => {
+    if (start.measure === position.measure && start.startTick <= tick) k = i;
+  });
+  if (k <= 0) {
+    return false;
+  }
+  const previousNotes = record.partMeasures[measureStarts[k - 1].measure].notes;
+  return previousNotes.length > 0 && !!previousNotes[previousNotes.length - 1].fermata;
 }
 
 /**
