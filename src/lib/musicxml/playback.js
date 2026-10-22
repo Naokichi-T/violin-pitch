@@ -2,6 +2,7 @@
 // playback.js
 // 【音程チェックアプリ】楽譜作成アプリ（string-score）の src/lib/score/playback.js をそのままコピーしたもの（ステップA-2）
 //   読み込んだ楽譜を五線譜に描くのに使う。中身は変えていない
+//   （楽譜作成アプリの「自由な文字のテンポの指示」の直し（「再生では変えない」の範囲では速さを変えない）だけを入れた）
 // 楽譜データを「鳴らす音の一覧」に直すファイル（ステップ6-1）
 // 音を実際に鳴らすのは audio/sound.js の仕事。ここでは計算だけをする
 // （ステップ6-3a：スタッカート・テヌート・アクセント・スラーを、音の長さと強さに反映する）
@@ -795,7 +796,8 @@ function makeTempoWarp(score, startMeasure, order) {
       while (to < score.measures.length - 1 && !score.measures[to].gradualEnd) to = to + 1;
       let rangeLength = 0;
       for (let k = i; k <= to; k++) rangeLength = rangeLength + measureLength(score, k); // アウフタクトなら短い長さ（ステップ15-2）
-      const toRate = rate * (info.gradual === "rit" ? RIT_RATE : ACCEL_RATE);
+      // （自由な文字のテンポの指示："none"（再生では変えない）のときは、速さを変えない（1倍））
+      const toRate = rate * (info.gradual === "rit" ? RIT_RATE : info.gradual === "accel" ? ACCEL_RATE : 1);
       gradual = { startTick: tick, length: rangeLength, fromRate: rate, toRate: toRate, to: to };
     }
 
