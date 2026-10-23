@@ -2,6 +2,7 @@
 // render/notes.js
 // 【音程チェックアプリ】楽譜作成アプリ（string-score）の src/lib/score/render/notes.js をそのままコピーしたもの（ステップA-2）
 //   読み込んだ楽譜を五線譜に描くのに使う。中身は変えていない
+//   （楽譜作成アプリのステップ25の、記号をスラーの上へ持ち上げる量（slurLift）を渡す所だけ足した）
 // 音符・休符1つ分のデータから VexFlow の音符を作る
 // ==========================================================
 
@@ -30,14 +31,16 @@ const ALTER_TO_VF = { "-2": "bb", "-1": "b", 0: "n", 1: "#", 2: "##" };
 //   keySignature … 今の調号（前打音の臨時記号を決めるのに使う）（ステップ11-8a）
 //   measureRest  … 小節まるごとの休符として描くか（model.js の isMeasureRest で調べたもの）（ステップ13-3）
 //   stemDirection … 符尾の向き（VF.Stem.UP・VF.Stem.DOWN）。省略したら自動で決める（2音トレモロで使う）（ステップ14-6a）
+//   slurLift … スラーの外に書く記号（弓・指番号など）を持ち上げる量（ピクセル。省略したら 0）（楽譜作成アプリのステップ25）
 // 2音トレモロの音符は、下の音の音符を返す。上の音の音符は、その音符の alternate に入れておく（render/alternate.js）
 // ----------------------------------------------------------
-export function createNote(VF, note, clef, accidentals = [], keySignature = 0, measureRest = false, stemDirection = null) {
+export function createNote(VF, note, clef, accidentals = [], keySignature = 0, measureRest = false, stemDirection = null, slurLift = 0) {
   // 小節まるごとの休符：拍子に関係なく、全休符を小節のまん中に描く（ステップ13-3）
   if (measureRest) return createMeasureRest(VF, note, clef);
 
   // 2音トレモロ：下の音と上の音を、別々の音符として作る（ステップ14-6a）
-  if (isAlternate(note)) return createAlternate(VF, note, clef, accidentals, keySignature);
+  // （楽譜作成アプリのステップ25：記号を持ち上げる量も渡す）
+  if (isAlternate(note)) return createAlternate(VF, note, clef, accidentals, keySignature, slurLift);
 
   // VexFlow での長さの書き方（例：'q'）
   let duration = DURATIONS[note.duration].vf;
@@ -87,7 +90,7 @@ export function createNote(VF, note, clef, accidentals = [], keySignature = 0, m
 
   // 記号（弓・指番号・アーティキュレーションなど）を付ける（休符には付けない）
   if (!note.rest) {
-    addSymbols(VF, staveNote, note);
+    addSymbols(VF, staveNote, note, slurLift); // スラーの外に書く記号は、slurLift だけ持ち上げる（楽譜作成アプリのステップ25）
   }
 
   // 前打音を付ける（休符には付けない）（ステップ11-8a）
@@ -146,7 +149,7 @@ function centerWholeDiamonds(VF, staveNote, note) {
 //   ・臨時記号は、高さごと（低い順）に決めたものを、それぞれの音符に付ける
 // 戻り値：下の音の VexFlow の音符（上の音の音符は alternate に入っている）
 // ----------------------------------------------------------
-function createAlternate(VF, note, clef, accidentals, keySignature) {
+function createAlternate(VF, note, clef, accidentals, keySignature, slurLift = 0) {
   const [lowPitch, highPitch] = notePitches(note);
   const marks = accidentals ?? [];
 
@@ -160,7 +163,7 @@ function createAlternate(VF, note, clef, accidentals, keySignature) {
   delete lowData.chord;
   delete lowData.alternate;
   delete lowData.tremolo;
-  const mainNote = createNote(VF, lowData, clef, [marks[0] ?? null], keySignature, false, direction);
+  const mainNote = createNote(VF, lowData, clef, [marks[0] ?? null], keySignature, false, direction, slurLift); // 記号は下の音に付くので、持ち上げる量も渡す（楽譜作成アプリのステップ25）
 
   // 上の音：高さ・長さだけ（記号は付けない）
   const highData = { pitch: highPitch, duration: note.duration, dots: note.dots ?? 0 };

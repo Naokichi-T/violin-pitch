@@ -3,6 +3,7 @@
 // 【音程チェックアプリ】楽譜作成アプリ（string-score）の src/lib/score/render/symbols.js をそのままコピーしたもの（ステップA-2）
 //   読み込んだ楽譜を五線譜に描くのに使う。中身は変えていない
 //   （楽譜作成アプリで、全音符の記号の位置・記号どうしの重なり・アップボウの高さを直した版に入れ替えた）
+//   （楽譜作成アプリのステップ25で、指番号・弓などをスラーの外（上）に書くようにした版に入れ替えた）
 // 音符に記号（弓・指番号・アーティキュレーション・強弱など）を付ける・描く
 // （記号の一覧表は ../symbols.js にある）
 // ==========================================================
@@ -11,6 +12,21 @@ import { BOWINGS, ARTICULATIONS, STRING_MARKS, BREATHS, ORNAMENTS, FERMATA, TECH
 
 // フェルマータを持ち上げる量（ピクセル。マイナスが上）
 const FERMATA_LIFT = -6;
+
+// ----------------------------------------------------------
+// 関数：placeOutsideSlur
+// スラーの外（上）に書く記号の印を付けて、スラーの下に入らないように持ち上げる（ステップ25）
+// スラーの外に書く記号：弓・弦楽器の記号（ハーモニクスなど）・指番号・奏法の文字・フェルマータ
+// （スタッカート・テヌート・アクセントなどとトリルなどの装飾は、スラーの内側（玉の近く）に書く）
+//   mark     … 記号（VF.Articulation か VF.Annotation）
+//   slurLift … 持ち上げる量（ピクセル。スラーがかかっていなければ 0）
+//              render/spanners.js の drawSpanners で、下書きのときに測ったもの
+// 印（outsideSlur）は、スラーの通り道を決めるときに「この記号はよけない」ことを知らせるのに使う
+// ----------------------------------------------------------
+function placeOutsideSlur(mark, slurLift) {
+  mark.outsideSlur = true;
+  if (slurLift > 0) mark.setYShift(mark.getYShift() - slurLift); // 上へずらす（マイナスが上）
+}
 
 // 下向きの符尾の先から、強弱記号の文字の下端までの間（ピクセル）
 const STEM_GAP = 22;
@@ -23,8 +39,9 @@ const STEM_GAP = 22;
 //   VF        … VexFlow の部品一式
 //   staveNote … 記号を付ける VexFlow の音符
 //   note      … 音符1つ分のデータ
+//   slurLift  … スラーの外に書く記号を持ち上げる量（ピクセル。省略したら 0）（ステップ25）
 // ----------------------------------------------------------
-export function addSymbols(VF, staveNote, note) {
+export function addSymbols(VF, staveNote, note, slurLift = 0) {
   const ABOVE = VF.Modifier.Position.ABOVE; // 上に付ける
   const BELOW = VF.Modifier.Position.BELOW; // 下に付ける
 
@@ -48,6 +65,7 @@ export function addSymbols(VF, staveNote, note) {
     bowing.setPosition(ABOVE);
     // アップボウ（V）は縦に長いので、ダウンボウと同じ高さにそろえる
     if (note.bowing === "up") fitUpBow(VF, bowing);
+    placeOutsideSlur(bowing, slurLift); // スラーの外に書く（ステップ25）
     staveNote.addModifier(bowing, 0);
   }
 
@@ -58,6 +76,7 @@ export function addSymbols(VF, staveNote, note) {
     if (!symbol) continue; // 表にない名前は無視する
     const mark = new VF.Articulation(symbol.vf);
     mark.setPosition(ABOVE);
+    placeOutsideSlur(mark, slurLift); // スラーの外に書く（ステップ25）
     staveNote.addModifier(mark, 0);
   }
 
@@ -84,6 +103,7 @@ export function addSymbols(VF, staveNote, note) {
     fingering.setVerticalJustification(VF.Annotation.VerticalJustify.TOP);
     // 弓・アクセント・トリルなどに近すぎるときは、上へずらす
     keepAboveMarks(VF, fingering, staveNote);
+    placeOutsideSlur(fingering, slurLift); // スラーの外に書く（ステップ25）
     staveNote.addModifier(fingering, 0);
   }
 
@@ -95,6 +115,7 @@ export function addSymbols(VF, staveNote, note) {
     technique.setVerticalJustification(VF.Annotation.VerticalJustify.TOP);
     // 弓・アクセント・トリルなどに近すぎるときは、上へずらす（指番号をずらしたら、同じだけずらす）
     keepAboveMarks(VF, technique, staveNote);
+    placeOutsideSlur(technique, slurLift); // スラーの外に書く（ステップ25）
     staveNote.addModifier(technique, 0);
   }
 
@@ -117,6 +138,7 @@ export function addSymbols(VF, staveNote, note) {
     fermata.setYShift(FERMATA_LIFT);
     // 指番号などをずらしたら、同じだけずらす
     keepAboveMarks(VF, fermata, staveNote);
+    placeOutsideSlur(fermata, slurLift); // スラーの外に書く（FERMATA_LIFT に足して持ち上げる）（ステップ25）
     staveNote.addModifier(fermata, 0);
   }
 }
