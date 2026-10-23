@@ -132,6 +132,9 @@ function noteGate(note, legato) {
   const articulations = note.articulations ?? [];
   if (articulations.includes("staccatissimo")) return GATE_STACCATISSIMO;
   if (articulations.includes("staccato")) return GATE_STACCATO;
+  // （楽譜作成アプリのステップ26：テヌートとスラーの中の音は、いっぱいに鳴らして次の音とつなげる形に戻した）
+  if (articulations.includes("tenuto")) return GATE_TENUTO;
+  if (legato) return GATE_SLUR;
   return GATE_NORMAL;
 }
 
