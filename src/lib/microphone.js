@@ -1,3 +1,13 @@
+// 【iPad で音を拾わないのを直した手直し】
+//   iPad の Safari では、ボタンを押した瞬間の処理の中で作らなかった AudioContext は、「一時停止」の状態で始まる
+//   （自動で音が鳴るのを防ぐ決まり）。前は、マイクの許可を待った「あと」で作っていたので、一時停止のままになり、
+//   マイクの音が流れてこなかった。そこで、
+//     ① AudioContext を、許可を待つ「前」（ボタンを押した瞬間の処理の中）に作る
+//     ② 念のため、一時停止なら再開する（resume）
+//     ③ 波形を取り出す部品のあとに、音量0の部品をはさんでスピーカーまでつなぐ
+//        （Safari では、スピーカーまでつながっていない流れが処理されないことがあるため。音量0なので音は出ない）
+//   パソコン・Android の動きは変わらない
+
 // 波形から周波数を検出する関数を読み込む
 // （ステップD：音の大きさ（RMS）を計算する関数も読み込む）
 import { detectPitch, calculateRms } from "./pitch.js";
@@ -30,6 +40,9 @@ let mediaStream = null;
 
 // マイクの音を AudioContext の中に取り込むための部品
 let sourceNode = null;
+
+// 音量0の部品（波形を取り出す部品からスピーカーまでつなぐのに使う。音は出ない）（iPad で音を拾わないのを直した手直し）
+let silentNode = null;
 
 // 繰り返し処理の番号（停止するときに使う）
 let animationId = null;
@@ -93,6 +106,13 @@ export async function startMicrophone(onPitch) {
     throw new Error("このブラウザ（またはこのページ）ではマイクが使えません。");
   }
 
+  // 音を扱う土台を、許可を待つ「前」に作る（ボタンを押した瞬間の処理の中で作るため）（iPad で音を拾わないのを直した手直し）
+  // resume：一時停止の状態で作られたときに、再開を頼む（ここもボタンを押した瞬間の処理の中なので、iPad でも再開できる）
+  const context = new AudioContext();
+  if (context.state === "suspended") {
+    context.resume().catch(() => {}); // 再開できなくても、あとでもう一度頼む
+  }
+
   // マイクの使用許可を求める（ここでブラウザの許可ダイアログが出る）
   let stream;
   try {
@@ -106,6 +126,7 @@ export async function startMicrophone(onPitch) {
     });
   } catch (error) {
     // 許可を拒否された場合や、マイクが見つからない場合はここに来る
+    context.close(); // 先に作った土台は使わないので閉じる（iPad で音を拾わないのを直した手直し）
     // 画面にそのまま表示できるように、日本語のメッセージにして投げ直す
     if (error.name === "NotAllowedError") {
       throw new Error("マイクの使用が許可されませんでした。ブラウザの設定を確認してください。");
@@ -119,14 +140,25 @@ export async function startMicrophone(onPitch) {
   // 許可を待っている間に停止されていた場合は、取得したマイクを止めて終わる
   if (myRequest !== requestCount) {
     stream.getTracks().forEach((track) => track.stop());
+    context.close(); // 先に作った土台も閉じる（iPad で音を拾わないのを直した手直し）
     return;
   }
 
   // マイクの音を覚えておく
   mediaStream = stream;
 
-  // 音を扱う土台を作る
-  audioContext = new AudioContext();
+  // 音を扱う土台（許可を待つ前に作ったもの）を使う（iPad で音を拾わないのを直した手直し）
+  audioContext = context;
+  // まだ一時停止のままなら、もう一度再開を頼む（再開できなくても先へ進む。そのときは音が流れてこない）
+  if (audioContext.state === "suspended") {
+    try {
+      await audioContext.resume();
+    } catch (error) {
+      // 再開できなかった。何もしない
+    }
+    // 再開を待っている間に停止されていたら、ここで終わる（停止のほうで、マイクと土台は片付け済み）
+    if (myRequest !== requestCount) return;
+  }
 
   // マイクの音を土台の中に取り込む
   sourceNode = audioContext.createMediaStreamSource(mediaStream);
@@ -135,6 +167,13 @@ export async function startMicrophone(onPitch) {
   analyser = audioContext.createAnalyser();
   analyser.fftSize = FFT_SIZE;
   sourceNode.connect(analyser);
+
+  // 波形を取り出す部品のあとに音量0の部品をはさんで、スピーカーまでつなぐ（音は出ない）（iPad で音を拾わないのを直した手直し）
+  // （Safari では、スピーカーまでつながっていない流れが処理されないことがあるため）
+  silentNode = audioContext.createGain();
+  silentNode.gain.value = 0;
+  analyser.connect(silentNode);
+  silentNode.connect(audioContext.destination);
 
   // 波形データを入れる入れ物を、データの個数ぶん用意する
   waveform = new Float32Array(analyser.fftSize);
@@ -202,6 +241,12 @@ export function stopMicrophone() {
   if (sourceNode !== null) {
     sourceNode.disconnect();
     sourceNode = null;
+  }
+
+  // 音量0の部品の接続も外す（iPad で音を拾わないのを直した手直し）
+  if (silentNode !== null) {
+    silentNode.disconnect();
+    silentNode = null;
   }
 
   // マイクを止める（ブラウザの「マイク使用中」の表示が消える）
