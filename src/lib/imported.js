@@ -5,6 +5,8 @@
 // （ステップC-1：「通し」の音程の最高点 bestPitchScore を記録する関数を足した。最高点は音程とリズムで別々に持つ）
 // （ステップC-3：toPitchNote を、ほかのファイルからも使えるようにした）
 // （ステップD：「通し」のリズムの最高点 bestRhythmScore を記録する関数を足した）
+// （前打音の付いた音の判定：前打音の付いた音（主音）も判定するようにした。前打音（小さい音符）そのものは判定しない。
+//   前打音の時間をよけて判定するのは importedTimeline.js（通し）。五線譜では、前打音だけを灰色にする（render.js））
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -59,14 +61,13 @@ const EXCLUDED_COLOR = "#9e9e9e";
 // 音符のどこを見て外すかと、知らせるときの名前
 //   range     ：音域の外（重音なら、いちばん上の音で調べる）
 //   ornament  ：トリル・プラルトリラー・モルデント・ターン（音がすばやく行き来するので、1つの高さに決まらない）
-//   grace     ：前打音の付いた音（頭に別の高さの音が入る）
+//   （前打音の付いた音の判定：前打音の付いた音（grace）は外さないようにした。前打音のあとの主音の高さで判定する）
 //   tremolo   ：トレモロ（2音トレモロも。音を細かく刻む・行き来する）
 //   glissando ：グリッサンド（高さがすべって変わる）
 //   harmonic  ：ハーモニクスのひし形の玉がある音（書いた高さと、聞こえる高さが違う）
 const EXCLUDE_LABELS = {
   range: "音域（ソ3〜シ6）の外の音",
   ornament: "トリルなどの装飾の付いた音",
-  grace: "前打音の付いた音",
   tremolo: "トレモロの音",
   glissando: "グリッサンドの付いた音",
   harmonic: "ハーモニクス（ひし形）の音",
@@ -320,7 +321,7 @@ export function getExcludeReason(note) {
   if (noteNumber < MIN_NOTE_NUMBER || noteNumber > MAX_NOTE_NUMBER) return "range";
   if (hasDiamond(note)) return "harmonic";
   if (note.ornament) return "ornament";
-  if (note.grace) return "grace";
+  // （前打音の付いた音の判定：前打音の付いた音は、ここでは外さない。前打音のあとの主音で判定する）
   if (note.tremolo) return "tremolo";
   if (note.glissando) return "glissando";
   return null;
@@ -339,6 +340,7 @@ export function analyzePart(score, partIndex) {
 
   // 数える入れ物
   let chordCount = 0; // 重音の数
+  let graceCount = 0; // 前打音の付いた、判定できる音の数（前打音の付いた音の判定）
   let judgeableCount = 0; // 判定できる音の数
   const excluded = {}; // 外す理由ごとの音の数（例：{ range: 3 }）
 
@@ -365,6 +367,7 @@ export function analyzePart(score, partIndex) {
       const reason = getExcludeReason(note);
       if (reason === null) {
         judgeableCount += 1;
+        if (note.grace) graceCount += 1; // 前打音の付いた音（前打音の付いた音の判定）
       } else {
         // excluded[reason] がまだ無いときは 0 として、1つ足す
         excluded[reason] = (excluded[reason] ?? 0) + 1;
@@ -378,6 +381,11 @@ export function analyzePart(score, partIndex) {
   // 重音
   if (chordCount > 0) {
     notices.push("重音 " + chordCount + "か所は、いちばん上の音で判定します");
+  }
+
+  // 前打音の付いた音（前打音の付いた音の判定）
+  if (graceCount > 0) {
+    notices.push("前打音 " + graceCount + "か所は、前打音（灰色で表示します）のあとの音で判定します");
   }
 
   // 判定から外す音（理由ごとに「○○ 3音」の形でつなげる）

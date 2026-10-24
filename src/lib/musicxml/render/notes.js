@@ -3,6 +3,8 @@
 // 【音程チェックアプリ】楽譜作成アプリ（string-score）の src/lib/score/render/notes.js をそのままコピーしたもの（ステップA-2）
 //   読み込んだ楽譜を五線譜に描くのに使う。中身は変えていない
 //   （楽譜作成アプリのステップ25の、記号をスラーの上へ持ち上げる量（slurLift）を渡す所だけ足した）
+//   （前打音の付いた音の判定：前打音の小さな音符を、主音の staveNote.vpGraceNote に覚えておくようにした。
+//     render.js で、前打音だけを灰色にするのに使う（音程チェックアプリだけの直し））
 // 音符・休符1つ分のデータから VexFlow の音符を作る
 // ==========================================================
 
@@ -247,4 +249,6 @@ function addGraceNote(VF, staveNote, note, clef, keySignature) {
   };
 
   staveNote.addModifier(group, 0);
+  // 前打音の小さな音符を覚えておく（render.js で、前打音だけを灰色にするのに使う）（前打音の付いた音の判定）
+  staveNote.vpGraceNote = graceNote;
 }

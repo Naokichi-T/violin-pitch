@@ -3,6 +3,9 @@
 // （ステップC-3：お手本を鳴らすための、鳴らす音の並び sounds を足した）
 // （ステップD：音ごとに、リズムを判定するか（rhythm）と、出だしの見つけ方（method）を足した）
 // （ステップE-3：音ごとに、リズムの OK の範囲を何倍にするか（rhythmFactor）と、その印（rhythmLabel）を足した）
+// （前打音の付いた音の判定：前打音の付いた音も判定するようにした。前打音の時間をよけるため、
+//   その音の start を「拍の頭 ＋ 前打音の長さ」（主音が鳴り始める時刻。再生と同じ）にする。
+//   お手本の音（sounds）にも前打音を入れて、主音をそのぶん遅らせる（再生と同じタイミングにする））
 // 「通し」で、判定する音ごとに「何秒から何秒まで鳴るか」を決める。
 // 時刻の計算は、楽譜作成アプリ（string-score）の再生の計算（playback.js の buildEvents）をそのまま使うので、
 // テンポの変化・rit.・accel.・a tempo・フェルマータ・カエスーラ・くり返し・アウフタクトが、再生とぴったり同じになる。
@@ -14,6 +17,8 @@
 //       note:      { step, accidental, octave }  … 目標の音（音程チェックアプリの音の形）
 //       positions: [{ measure, note }, ...]      … 五線譜の音符の場所（タイでつながった音符は全部）
 //       start:     1.5                           … 鳴り始める時刻（秒。曲の頭（区間の頭）を 0 とする）
+//                                                  前打音の付いた音は、前打音のあと、主音が鳴り始める時刻（前打音の付いた音の判定）
+//                                                  音程はここから、リズムはこの時刻と比べて判定する
 //       end:       2.25                          … 鳴り終わる時刻（秒。次の音の始まりか、休符の始まり）
 //       judge:     true                          … 判定するか（短すぎる音は false）
 //       rhythm:    true                          … リズムを判定するか（ステップD）
@@ -34,15 +39,18 @@
 //               note が数字なら、その音符の位置。note が "start" なら小節の音符の始まり、"end" なら小節の右端
 //   sounds: [{ pitches, start, end }, ...] … お手本で鳴らす音の並び（ステップC-3）
 //               灰色の音（判定しない音）も入れる。重音は全部の高さ（pitches）を鳴らす。
-//               タイでつながった音符は1つの長い音にまとめる。トリルなどの装飾・前打音は付けず、書いてある音だけ
+//               タイでつながった音符は1つの長い音にまとめる。トリルなどの装飾は付けず、書いてある音だけ
+//               （前打音の付いた音の判定：前打音は、拍の頭に前打音の音を入れて、主音をそのぶん遅らせる（再生と同じ））
 //   beatSeconds: 0.75                … 最初の音のあたりの、1拍の長さ（秒）（カウントの間に使う）
 // }
 
 // 楽譜作成アプリの再生の計算（鳴らす音の一覧・1ティックが何秒か・1拍の長さ）を読み込む（コピーしたもの）
-import { buildEvents, secondsPerTick, beatTicks } from "#lib/musicxml/playback.js";
+// （前打音の付いた音の判定：前打音の長さを決める graceLength も読み込む）
+import { buildEvents, secondsPerTick, beatTicks, graceLength } from "#lib/musicxml/playback.js";
 
 // 楽譜作成アプリの、拍子とテンポを調べる関数を読み込む（コピーしたもの）
-import { timeAt, tempoAt } from "#lib/musicxml/model.js";
+// （前打音の付いた音の判定：音符の長さ（ティック）を調べる noteTicks も読み込む）
+import { timeAt, tempoAt, noteTicks } from "#lib/musicxml/model.js";
 
 // 読み込んだ楽譜を五線譜（楽譜作成アプリの形）に直す関数と、判定する音の並びを作る関数を読み込む
 // （ステップC-3：楽譜作成アプリの音の高さを、音程チェックアプリの音の形にする関数も読み込む）
@@ -63,6 +71,22 @@ export const MIN_JUDGE_SECONDS = 0.2;
 // 1つの音の、どこから判定に使いはじめるか（0.4 なら、頭の4割をよけて、後ろの6割で判定する）
 // 弾き始めは音程が揺れやすく、前の音の残りも拾いやすいので、頭のほうは使わない
 export const JUDGE_START_RATIO = 0.4;
+
+/**
+ * 前打音の付いた音符で、前打音が鳴る長さ（ティック）を返す関数（このファイルの中だけで使う）（前打音の付いた音の判定）
+ * 再生（playback.js の graceLength）と同じ割合にする：短前打音は32分音符ぶん（主音の半分まで）、長前打音は主音の半分（付点なら3分の2）。
+ * 鳴る時間（highlight の startTick〜endTick）は、テンポの変化などで楽譜の長さと違うことがあるので、割合で直す。
+ * @param {object} note - 音符のデータ
+ * @param {{startTick: number, endTick: number}} highlight - その音符の鳴る時間（buildEvents の highlights の1つ）
+ * @returns {number} 前打音の長さ（ティック）。前打音がなければ 0
+ */
+function graceTicksOf(note, highlight) {
+  if (!note.grace) return 0;
+  const length = noteTicks(note); // 楽譜の上の長さ
+  if (length <= 0) return 0;
+  const rate = graceLength(note, length) / length; // 主音のうち、前打音が使う割合
+  return (highlight.endTick - highlight.startTick) * rate;
+}
 
 /**
  * テンポを変えた楽譜データ（楽譜作成アプリの形）を作る関数（このファイルの中だけで使う）
@@ -132,7 +156,9 @@ export function buildTimeline(record, tempo, expandRepeats) {
       return; // 判定する音ではない音符（灰色の音など）
     }
     if (p === 0) {
-      starts[k] = h.startTick; // 1つ目の音符の始まりが、この音の始まり
+      // 1つ目の音符の始まりが、この音の始まり
+      // （前打音の付いた音の判定：前打音の付いた音は、前打音のぶんだけ遅らせる（主音が鳴り始める時刻））
+      starts[k] = h.startTick + graceTicksOf(note, h);
       slurred[k] = slurredFromPrevious; // ステップD
     }
     ends[k] = h.endTick; // タイでつながった最後の音符の終わりが、この音の終わり
@@ -319,10 +345,20 @@ function buildSounds(record, result, tickSeconds) {
       return;
     }
 
+    // 前打音：拍の頭に前打音の音を入れて、主音はそのぶん遅く始める（再生と同じ）（前打音の付いた音の判定）
+    const graceTicks = graceTicksOf(note, h);
+    if (graceTicks > 0) {
+      sounds.push({
+        pitches: [toPitchNote(note.grace.pitch)],
+        start: h.startTick * tickSeconds,
+        end: (h.startTick + graceTicks) * tickSeconds,
+      });
+    }
+
     // 新しい音：重音なら全部の高さ
     const sound = {
       pitches: notePitches(note).map((pitch) => toPitchNote(pitch)),
-      start: h.startTick * tickSeconds,
+      start: (h.startTick + graceTicks) * tickSeconds,
       end: h.endTick * tickSeconds,
     };
     sounds.push(sound);

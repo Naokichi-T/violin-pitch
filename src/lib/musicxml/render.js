@@ -8,6 +8,8 @@
 //     ・noteColors … 音符ごとの色（判定から外す音を灰色にするため。あとで判定の結果の色にも使う）
 //   （ステップD-3：もう1つ足した）
 //     ・measureRange … 描く小節の範囲（練習する区間の小節だけを描くため）
+//   （前打音の付いた音の判定：noteColors を渡したときは、前打音（小さな音符）をいつも灰色にする。
+//     前打音は判定しないので、主音が黒や判定の結果の色になっても、前打音だけは灰色のままにする）
 //   （ステップE-2：もう1つ足した）
 //     ・proportional … 改行しない1本の帯にして、音符を「始まる時刻」に比例した位置に置く（流れるモードのため）
 //   （楽譜作成アプリの「自由な文字のテンポの指示」の直し（rall. などの自由な文字を書く・音1つに付けたものは点線なし）だけを入れた）
@@ -41,6 +43,9 @@ import { createTuplets, createBeams, placeTuplets } from "./render/tuplets.js";
 import { drawBeatLines } from "./render/beatLines.js";
 import { measureNoteWidths } from "./render/widths.js";
 import { setAlternateStyle, drawAlternate, partnerOf, restoreAlternateStem } from "./render/alternate.js";
+
+// 【音程チェックアプリ（前打音の付いた音の判定）】前打音（判定しない音）の色。判定から外す音と同じ灰色（imported.js の EXCLUDED_COLOR と同じ）
+const GRACE_COLOR = "#9e9e9e";
 
 // ----------------------------------------------------------
 // 見た目の大きさの設定（単位はピクセル）
@@ -600,6 +605,11 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
             // 【音程チェックアプリ（ステップA-2）】音符ごとの色の表にある音符は、その色にする（判定から外す音の灰色など）
             const color = info.noteColors.get(`${p}-${i}-${j}`);
             setAlternateStyle(staveNote, { fillStyle: color, strokeStyle: color });
+          }
+          // 【音程チェックアプリ（前打音の付いた音の判定）】前打音は判定しないので、いつも灰色にする
+          //   （noteColors を渡したとき＝音程チェックアプリの五線譜のときだけ。主音の色とは別に、前打音の小さな音符に色を付ける）
+          if (info.noteColors && staveNote.vpGraceNote) {
+            staveNote.vpGraceNote.setStyle({ fillStyle: GRACE_COLOR, strokeStyle: GRACE_COLOR });
           }
           // 何パート目・何小節目・何番目の音かも一緒に覚えておく（当たり判定に使う）
           allNotes[p].push({ staveNote: staveNote, data: note, line: l, part: p, measure: i, note: j });
