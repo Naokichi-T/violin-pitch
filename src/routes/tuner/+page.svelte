@@ -1,11 +1,10 @@
 <script>
   // onDestroy：このページが画面から消えるときに後片付けをするための仕組み
-  import { onDestroy, onMount } from "svelte"; // onMount：確認用の表示（?debug=1）のために足した
+  import { onDestroy } from "svelte";
 
   // マイクの音の高さを調べはじめる関数と、やめる関数を読み込む
   // （このバージョンのSvelteKitでは、src/lib フォルダを「#lib」と書いて指す）
-  // （確認用の表示（?debug=1）：今の状態を返す getMicDebugInfo も読み込む。原因が分かったら外す予定）
-  import { startMicrophone, stopMicrophone, getMicDebugInfo } from "#lib/microphone.js";
+  import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
 
   // 周波数から音名とズレを計算する関数と、ズレを表示用の文字列にする関数を読み込む
   import { frequencyToNote, formatCents } from "#lib/note.js";
@@ -57,19 +56,6 @@
 
   // マイクが動いているかどうか（true：動作中、false：停止中）
   let isRunning = $state(false);
-
-  // ===== 確認用の表示（URL の最後に ?debug=1 を付けたときだけ出す）=====
-  // iPad で音を拾わない原因を調べるため。原因が分かったら外す予定
-  let debugMode = $state(false); // ?debug=1 が付いているか
-  let debugInfo = $state.raw({}); // マイクの今の状態（0.25秒ごとに読み直す）
-  onMount(() => {
-    debugMode = new URLSearchParams(window.location.search).has("debug");
-    if (!debugMode) return;
-    const timer = setInterval(() => {
-      debugInfo = getMicDebugInfo();
-    }, 250);
-    return () => clearInterval(timer);
-  });
 
   // エラーメッセージ（エラーがないときは空文字）
   let errorMessage = $state("");
@@ -417,20 +403,6 @@
     基準の音は、{REFERENCE_FREQUENCY_MIN}〜{REFERENCE_FREQUENCY_MAX}Hz の範囲で選べます。設定は、このブラウザに保存されます。<br />
     iPhone でお手本の音が出ないときは、消音モードを解除してから、ページを開き直してください。
   </p>
-  <!-- 確認用の表示（?debug=1 のときだけ）。iPad で音を拾わない原因を調べるため。原因が分かったら外す予定 -->
-  {#if debugMode}
-    <section class="debug">
-      <h2>確認用の表示</h2>
-      <dl>
-        <dt>ブラウザ</dt>
-        <dd>{navigator.userAgent}</dd>
-        {#each Object.entries(debugInfo) as [name, value]}
-          <dt>{name}</dt>
-          <dd>{value}</dd>
-        {/each}
-      </dl>
-    </section>
-  {/if}
 </main>
 
 <style>
@@ -692,26 +664,5 @@
     font-size: 0.75rem;
     line-height: 1.6;
     color: #757575;
-  }
-  /* 確認用の表示（?debug=1） */
-  .debug {
-    margin-top: 24px;
-    padding: 12px;
-    border: 1px dashed #999;
-    border-radius: 8px;
-    font-size: 12px;
-    color: #333;
-    word-break: break-all; /* 長い文字も折り返す */
-  }
-  .debug h2 {
-    margin: 0 0 8px;
-    font-size: 14px;
-  }
-  .debug dt {
-    font-weight: bold;
-    margin-top: 6px;
-  }
-  .debug dd {
-    margin: 0 0 0 8px;
   }
 </style>
