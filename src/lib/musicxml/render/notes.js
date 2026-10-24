@@ -9,7 +9,7 @@
 import { DURATIONS, CLEFS, pitchToVexKey, notePitches, isAlternate } from "../model.js";
 import { addSymbols } from "./symbols.js";
 import { attachAlternate } from "./alternate.js";
-import { keyAlters } from "../accidentals.js";
+import { needsGraceAccidental } from "../accidentals.js"; // 前打音に臨時記号を付けるか（注意の臨時記号：keyAlters のかわりに使う）
 import { GRACES } from "../symbols.js";
 
 // 前打音の小さな音符の長さ（VexFlow の書き方）（ステップ11-8a）
@@ -204,6 +204,7 @@ function createMeasureRest(VF, note, clef) {
 //   ・短前打音 … 斜線の付いた小さな8分音符
 //   ・長前打音 … 斜線のない小さな音符（主音の半分の長さ。付点の主音なら付点を取った長さ）
 // 臨時記号は、調号と違う ♯♭ のときだけ付ける（小節の中の、前の臨時記号は見ない）
+// （注意の臨時記号：注意の記号の印（courtesy）があるときは、調号どおりでも付ける）
 //   staveNote … 主音（VexFlow の音符）
 //   note      … 主音のデータ（note.grace に前打音が入っている）
 //   clef      … 今の音部記号
@@ -226,9 +227,9 @@ function addGraceNote(VF, staveNote, note, clef, keySignature) {
     stemDirection: VF.Stem.UP, // 前打音の符尾は上向きにそろえる
   });
 
-  // 臨時記号：調号どおりでなければ付ける
+  // 臨時記号：調号どおりでなければ付ける（注意の臨時記号：注意の記号の印があれば、調号どおりでも付ける）
   const alter = grace.pitch.alter ?? 0;
-  if (alter !== keyAlters(keySignature)[grace.pitch.step]) {
+  if (needsGraceAccidental(grace.pitch, keySignature)) {
     graceNote.addModifier(new VF.Accidental(ALTER_TO_VF[alter] ?? "n"), 0);
   }
 
