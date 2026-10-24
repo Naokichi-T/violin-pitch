@@ -499,13 +499,14 @@
 <!-- 「じっくり」の部品に渡す、五線譜の描き方（ステップB） -->
 <!-- 「じっくり」の部品から、今の目標の音の番号・通過した音・目標を変える関数を受け取って、読み込んだ楽譜の五線譜を描く -->
 <!-- （1画面に収める手直しの続き：「練習を始める」を押すたびに増える数 scrollRequest も受け取って、目標の音の段までスクロールする） -->
-{#snippet importedStaff(targetIndex, passed, setTarget, scrollRequest)}
+<!-- （高さを測って合わせる手直し：「じっくり」の部品が測って決めた五線譜の枠の高さ staffHeight も受け取って、maxHeight に使う） -->
+{#snippet importedStaff(targetIndex, passed, setTarget, scrollRequest, staffHeight)}
   <ImportedStaff
     score={renderScoreData}
     noteColors={practiceColors(targetIndex, passed)}
     focus={practiceTargets[targetIndex]?.positions[0] ?? null}
     bands={practiceTargets[targetIndex]?.positions ?? []}
-    maxHeight={STEP_STAFF_HEIGHT}
+    maxHeight={staffHeight ?? STEP_STAFF_HEIGHT}
     {scrollRequest}
     measureRange={displayRange}
     onselect={(position) => selectFromStaff(position, targetIndex, setTarget)}

@@ -4,6 +4,8 @@
   // 練習を始めたときに五線譜を画面のいちばん上に動かすので、五線譜から「目標の音を聴く」までが1画面に収まる。
   // 画面がとても低いときでも、五線譜が1段（約120px）は見えるように、下限を 150px にする。
   // 読み込んだ楽譜の練習ページでも、同じ高さを使う（export して、そちらから読み込む）
+  // （高さを測って合わせる手直し：「練習を始める」を押したあとは、下に並ぶものの実際の高さを測って決めた高さ（staffHeight）を使う。
+  //   この値は、測る前（練習を始める前）に使う。380px と決め打ちだと、Pixel 8 などで下のボタンが画面の外に出てしまったため）
   export const STEP_STAFF_HEIGHT = "max(calc(100dvh - 380px), 150px)";
 </script>
 
@@ -58,6 +60,8 @@
   //                    setTarget   … 目標の音を変える関数（音符をタップしたときに、番号を渡して呼ぶ）
   //                    scrollRequest … 「練習を始める」を押すたびに1増える数（増えたら、五線譜の枠の中を目標の音の段までスクロールする）
   //                                    （1画面に収める手直しの続き）
+  //                    staffHeight … 五線譜の枠の高さの上限（CSS の書き方。例："412px"）（高さを測って合わせる手直し）
+  //                                  練習を始めたあとは、下に並ぶものの高さを測って決めた値。始める前は STEP_STAFF_HEIGHT
   //                  null が初期値（渡されなかったとき）
   let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled, staff = null } = $props();
 
@@ -241,6 +245,9 @@
       isListening = true;
 
       // 五線譜が画面のいちばん上に来るようにスクロールする（メーターなどが出てから動かす）（1画面に収める手直し）
+      // （高さを測って合わせる手直し：先に、メーターなどが出たあとの高さを測って、五線譜の枠の高さを決めてから動かす）
+      await tick();
+      fitStaffHeight();
       await tick();
       scrollPracticeToTop();
 
@@ -484,6 +491,7 @@
 
     // 止まっている状態に戻し、検出した音も消す
     isListening = false;
+    staffHeight = STEP_STAFF_HEIGHT; // 五線譜の枠の高さも、測る前の決め打ちに戻す（高さを測って合わせる手直し）
     detectedFrequency = null;
 
     // 数えていた時間も最初に戻す
@@ -533,6 +541,75 @@
   // 今までの五線譜（Staff）を入れる枠の要素。高さに上限を付けて、はみ出した分は枠の中で縦にスクロールする
   // （読み込んだ楽譜の五線譜は、自分でスクロールするので使わない）
   let staffBox = $state(null);
+
+  // ----- 高さを測って合わせる（高さを測って合わせる手直し） -----
+  // 380px と決め打ちしていたため、文字の大きさなどで、下に並ぶもの（目標の音〜「前」「次」のボタン）が高くなる端末
+  // （Pixel 8 など）では、ボタンが画面の外に出てしまった。そこで、練習を始めたら実際の高さを測って、五線譜の枠の高さを決める
+
+  // 五線譜の枠の高さの上限（CSS の書き方）。練習を始める前は、決め打ちの STEP_STAFF_HEIGHT
+  let staffHeight = $state(STEP_STAFF_HEIGHT);
+
+  // 「前」「目標の音を聴く」「次」の行の要素（いちばん下に収めたいもの）
+  let moveRow = $state(null);
+
+  // 五線譜の枠と、ボタンの行の下の端との間に、少しだけあけるすき間（ピクセル）
+  const FIT_BOTTOM_GAP = 12;
+
+  // 五線譜の枠を、これより低くはしない（ピクセル。1段（約120px）は見えるように。STEP_STAFF_HEIGHT の下限と同じ）
+  const FIT_MIN_HEIGHT = 150;
+
+  /**
+   * 五線譜の枠の高さを、今の画面に合わせて決め直す関数（高さを測って合わせる手直し）
+   * 画面の高さ − 目じるしの上にあける分（scroll-margin-top）− （目じるしから五線譜の枠の上端まで）
+   *   − 五線譜の枠の内側の余白と枠の線（高さの上限の外に足されるため）− （五線譜の枠の下端からボタンの行の下端まで）− すき間
+   * を、五線譜の枠の高さの上限にする。これで、目じるしを画面の上に合わせたとき、ボタンの行まで1画面に収まる。
+   * 五線譜の枠は、目じるし（practiceTop）のすぐ次の要素（今までの五線譜の枠でも、読み込んだ楽譜の五線譜でも同じ）。
+   */
+  function fitStaffHeight() {
+    if (practiceTop === null || moveRow === null) return;
+    const staffElement = practiceTop.nextElementSibling;
+    if (staffElement === null) return;
+    // 見えている画面の高さ（スマホでは、アドレスバーなどを除いた高さ）
+    const viewHeight = window.visualViewport?.height ?? window.innerHeight;
+    const topRect = practiceTop.getBoundingClientRect();
+    const staffRect = staffElement.getBoundingClientRect();
+    const rowRect = moveRow.getBoundingClientRect();
+    // 目じるしを画面の上に合わせるとき、上にあける分（CSS の scroll-margin-top。8px）
+    const scrollMargin = parseFloat(getComputedStyle(practiceTop).scrollMarginTop) || 0;
+    const above = staffRect.top - topRect.top; // 目じるしから五線譜の枠の上端まで
+    // 五線譜の枠の内側の余白と枠の線（max-height は中身の高さに効くので、その外に足される分）
+    const style = getComputedStyle(staffElement);
+    const extra =
+      style.boxSizing === "border-box"
+        ? 0
+        : (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0) + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    const below = rowRect.bottom - staffRect.bottom; // 五線譜の枠の下端から、ボタンの行の下端まで（目標の音・メーター・判定・やめる）
+    const height = Math.floor(viewHeight - scrollMargin - above - extra - below - FIT_BOTTOM_GAP);
+    staffHeight = `${Math.max(height, FIT_MIN_HEIGHT)}px`;
+  }
+
+  // 練習している間は、目標の音が変わったとき（「開放弦でもOK」の行が増えるなど、下の高さが変わることがある）や、
+  // 最後まで弾けたとき・エラーが出たときにも、測り直す（高さを測って合わせる手直し）
+  $effect(() => {
+    targetIndex; // これらが変わったら動くように、読んでおく
+    isFinished;
+    errorMessage;
+    if (!isListening) return;
+    tick().then(fitStaffHeight);
+  });
+
+  // 画面の大きさが変わったとき（向きを変えた・アドレスバーが出たり消えたりした）も、練習している間は測り直す
+  onMount(() => {
+    const handleResize = () => {
+      if (isListening) fitStaffHeight();
+    };
+    window.addEventListener("resize", handleResize);
+    window.visualViewport?.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      window.visualViewport?.removeEventListener("resize", handleResize);
+    };
+  });
 
   /**
    * 練習の部品のいちばん上が、画面のいちばん上に来るようにページをスクロールする関数
@@ -595,10 +672,11 @@
 <div class="practice-top" bind:this={practiceTop}></div>
 
 {#if staff !== null}
-  {@render staff(targetIndex, passed, setTarget, scrollRequest)}
+  {@render staff(targetIndex, passed, setTarget, scrollRequest, staffHeight)}
 {:else}
   <!-- 今までの五線譜は、高さに上限を付けた枠に入れる。音が多くて段が増えたら、枠の中でスクロールする（1画面に収める手直し） -->
-  <div class="staff-box" bind:this={staffBox} style:max-height={STEP_STAFF_HEIGHT}>
+  <!-- （高さを測って合わせる手直し：高さの上限は、測って決めた staffHeight にした） -->
+  <div class="staff-box" bind:this={staffBox} style:max-height={staffHeight}>
     <Staff {notes} signature={currentKey.signature} selectedIndex={targetIndex} {passed} onselect={setTarget} />
   </div>
 {/if}
@@ -693,7 +771,8 @@
 {/if}
 
 <!-- 目標の音を手動で動かすボタンと、目標の音をお手本として鳴らすボタンを、1行に並べる（1画面に収める手直し） -->
-<div class="move-row">
+<!-- （高さを測って合わせる手直し：この行の下の端までを1画面に収めるので、要素を覚えておく） -->
+<div class="move-row" bind:this={moveRow}>
   <!-- 最初の音が目標のときは、これより前に動かせないので押せない -->
   <!-- aria-label は、読み上げで操作する人のための、ボタンの説明（ボタンの文字を短くしたので付ける） -->
   <button class="move-button" disabled={targetIndex === 0} onclick={() => setTarget(targetIndex - 1)} aria-label="前の音"> ◀ 前 </button>
