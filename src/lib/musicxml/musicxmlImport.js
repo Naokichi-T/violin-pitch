@@ -5,6 +5,9 @@
 //   （edit.js は編集の関数がたくさん入った大きいファイルなので、使う2つの関数だけを clean.js に取り出した）
 //   （楽譜作成アプリの「自由な文字のテンポの指示」の直し（rall. などを元の文字のまま読む・書き出しの id の印・
 //     点線付きの文字・1小節目の rit.）だけを、楽譜作成アプリと同じように入れた。言葉の表は tempoWords.js にある）
+//   （保持線：楽譜作成アプリと同じく、「指の数字＋線の括弧」の <direction> を保持線（holdStart・holdEnd）として読むようにした）
+//   （注意の臨時記号：楽譜作成アプリと同じく、<accidental> が書いてある音の高さに注意の記号の印（courtesy）を付けて、
+//     最後に pruneCourtesy で要らない印を外すようにした。印が残った音には、五線譜で記号が出る）
 // MusicXML のファイルを読み込んで、このアプリの楽譜データにする
 // （ステップ8-3：読み込みの基本（タイトル・作曲者・テンポ・パート・拍子・調・音部記号・音符・休符・付点・タイ））
 // （ステップ8-4a：記号（弓・指番号・スタッカートなど・フェルマータ・pizz./arco・強弱・スラー・松葉））
@@ -78,8 +81,9 @@ import {
   ALTERNATE_DURATIONS,
   upgradeWedgeNotes,
 } from "./model.js";
-import { BOWINGS, ARTICULATIONS, STRING_MARKS, BREATHS, ORNAMENTS, TECHNIQUES, DYNAMICS } from "./symbols.js";
+import { BOWINGS, ARTICULATIONS, STRING_MARKS, BREATHS, ORNAMENTS, TECHNIQUES, DYNAMICS, HOLD_FINGERS } from "./symbols.js"; // HOLD_FINGERS：保持線に使える指（保持線）
 import { cleanSpanners, cleanAlternates } from "./clean.js";
+import { pruneCourtesy } from "./accidentals.js"; // 要らない注意の記号の印を外す（注意の臨時記号）
 // 文字から、テンポの変化の意味を当てる関数と、楽譜作成アプリで書き出した rit.・自由な文字の印（id の始まり）（自由な文字のテンポの指示）
 import { tempoWordKind, GRADUAL_ID_PREFIX } from "./tempoWords.js";
 
@@ -426,6 +430,17 @@ function readTempo(firstMeasure) {
 }
 
 // ----------------------------------------------------------
+// 関数：markCourtesy
+// <note> に <accidental>（表示する臨時記号）が書いてあれば、高さに注意の記号の印（courtesy）を付ける（注意の臨時記号）
+//   noteElement … <note>
+//   pitch       … 読んだ高さのデータ（ここに印を足す）
+// ここでは、記号が書いてあれば全部に印を付ける（要らない印は、最後に pruneCourtesy で外す）
+// ----------------------------------------------------------
+function markCourtesy(noteElement, pitch) {
+  if (childElement(noteElement, "accidental")) pitch.courtesy = true;
+}
+
+// ----------------------------------------------------------
 // 関数：harmonicElements
 // <note> の中の <notations> → <technical> → <harmonic> を全部集めて返す（ステップ14-5b）
 //   noteElement … <note>
@@ -539,6 +554,7 @@ function readNote(noteElement, divisions) {
           pairMark: pair, // { type: "start" か "stop", count: 連桁の本数 }
         };
         if (isDiamondNote(noteElement)) note.pitch.diamond = true;
+        markCourtesy(noteElement, note.pitch); // 臨時記号が書いてあれば、注意の記号の印（注意の臨時記号）
         return { note: note, ticks: pairTicks };
       }
     }
@@ -583,6 +599,8 @@ function readNote(noteElement, divisions) {
   const note = { pitch: { step: step, alter: alter, octave: octave }, duration: shape.duration, dots: shape.dots, tie: tie };
   // ひし形の玉なら、高さに印を付ける（重音の2つ目からの音も、この関数で読むので、高さごとに付く）（ステップ14-5b）
   if (isDiamondNote(noteElement)) note.pitch.diamond = true;
+  // 臨時記号が書いてあれば、注意の記号の印を付ける（重音の2つ目からの音も、この関数で読むので、高さごとに付く）（注意の臨時記号）
+  markCourtesy(noteElement, note.pitch);
   if (tuplet) note.tuplet = tuplet; // 連符の印（ステップ10-6）
   return { note: note, ticks: ticks };
 }
@@ -1108,6 +1126,8 @@ function hasDashesStart(direction) {
 //                                1つの音符の中で始まって終わる松葉を、その音符の下だけの松葉にできないときだけ使う）
 //                openWedges … 開いている（まだ終わりの来ていない）松葉の一覧（ステップ16-2）
 //                             { number: 番号, kind: 種類, note: 始まりの音符（まだ音符が来ていなければ null）} を、始まった順に並べる
+//                openHolds … 開いている（まだ終わりの来ていない）保持線の一覧（保持線）
+//                            { finger: 指の番号, number: <bracket> の番号, note: 始まりの音符（まだ音符が来ていなければ null）}
 //   counter   … 使えなかった記号を数える表
 // ----------------------------------------------------------
 function readDirection(direction, state, counter) {
@@ -1115,6 +1135,14 @@ function readDirection(direction, state, counter) {
   const sound = childElement(direction, "sound");
   const hasTempo = (sound && sound.getAttribute("tempo")) || direction.getElementsByTagName("metronome").length > 0;
   if (hasTempo) return;
+
+  // 保持線の始まり（指の数字＋線の括弧の始まり）：開いている保持線の一覧に足して、ほかの読み方はしない（保持線）
+  // （数字の <words> を、奏法の文字などとして数えないようにするため）
+  const holdStart = holdStartOf(direction);
+  if (holdStart) {
+    state.openHolds.push({ finger: holdStart.finger, number: holdStart.number, note: null });
+    return;
+  }
 
   childElements(direction, "direction-type").forEach((type) => {
     // 強弱：次の音符に付ける
@@ -1147,7 +1175,77 @@ function readDirection(direction, state, counter) {
         stopWedge(number, state, counter);
       }
     });
+
+    // 線の括弧の終わり：同じ番号で開いている保持線があれば閉じる（保持線）
+    // （開いていなければ、保持線ではない括弧なので、何もしない（数えない。今までと同じ））
+    childElements(type, "bracket").forEach((bracket) => {
+      if (bracket.getAttribute("type") !== "stop") return;
+      stopHold(bracket.getAttribute("number") ?? "1", state, counter);
+    });
   });
+}
+
+// ----------------------------------------------------------
+// 関数：holdStartOf
+// <direction> が保持線の始まりかを調べる（保持線）
+// 保持線の始まりとみなすもの（楽譜作成アプリの書き出しと同じ形）
+//   ・<words> の文字が、指の番号（1〜4）だけ
+//   ・<bracket type="start"> があって、線の端の形が「なし」（line-end="none"。書いていないときも「なし」とみなす）
+//   ・ほかの種類の指示（強弱・松葉など）は入っていない
+//   direction … <direction> の要素
+// 戻り値：{ finger: 指の番号, number: <bracket> の番号（文字）}（保持線の始まりでなければ null）
+// ----------------------------------------------------------
+function holdStartOf(direction) {
+  const types = childElements(direction, "direction-type");
+  const words = types.flatMap((type) => childElements(type, "words"));
+  const brackets = types.flatMap((type) => childElements(type, "bracket"));
+  // 数字1つと括弧1つだけでできているか（ほかの子の要素がないか）
+  const others = types.flatMap((type) => [...type.children].filter((child) => child.nodeName !== "words" && child.nodeName !== "bracket"));
+  if (words.length !== 1 || brackets.length !== 1 || others.length > 0) return null;
+  const finger = Number(words[0].textContent.trim());
+  if (!HOLD_FINGERS.includes(finger)) return null;
+  const bracket = brackets[0];
+  if (bracket.getAttribute("type") !== "start") return null;
+  const lineEnd = bracket.getAttribute("line-end") ?? "none";
+  if (lineEnd !== "none") return null;
+  return { finger: finger, number: bracket.getAttribute("number") ?? "1" };
+}
+
+// ----------------------------------------------------------
+// 関数：stopHold
+// 線の括弧の終わり（<bracket type="stop">）を読んだときの処理（保持線）
+// 同じ番号で開いている保持線を閉じて、始まりの音符に holdStart、ここまでに読んだ最後の音符に holdEnd を付ける
+//   ・開いている保持線がなければ、保持線ではない括弧なので、何もしない
+//   ・始まりのあと音符が来ていない・始まりと同じ音符で終わる（長さのない線）ときは、使わずに数える
+//   number  … <bracket> の番号（文字）
+//   state   … パートごとの読みかけの情報（readDirection の説明を参照）
+//   counter … 使えなかった記号を数える表
+// ----------------------------------------------------------
+function stopHold(number, state, counter) {
+  const index = state.openHolds.findIndex((open) => open.number === number);
+  if (index < 0) return;
+  const open = state.openHolds[index];
+  state.openHolds.splice(index, 1); // 一覧から外す
+  const last = state.lastNote;
+  if (open.note === null || !last || open.note === last) {
+    report(counter, "つなげられなかった保持線");
+    return;
+  }
+  addHoldFinger(open.note, "holdStart", open.finger);
+  addHoldFinger(last, "holdEnd", open.finger);
+}
+
+// ----------------------------------------------------------
+// 関数：addHoldFinger
+// 音符の holdStart か holdEnd の並びに、指の番号を足す（小さい順に並べる。同じ番号は1つだけ）（保持線）
+//   note   … 音符のデータ（直接書き換える）
+//   key    … "holdStart" か "holdEnd"
+//   finger … 指の番号
+// ----------------------------------------------------------
+function addHoldFinger(note, key, finger) {
+  const list = note[key] ?? [];
+  if (!list.includes(finger)) list.push(finger);
+  note[key] = list.sort((a, b) => a - b);
 }
 
 // ----------------------------------------------------------
@@ -1238,6 +1336,10 @@ function applyPending(note, state, counter) {
   state.openWedges.forEach((open) => {
     if (open.note === null) open.note = note;
   });
+  // 保持線の始まり：この音符の前で始まった保持線に、始まりの音符を覚える（保持線）
+  state.openHolds.forEach((open) => {
+    if (open.note === null) open.note = note;
+  });
   state.pending = {};
 }
 
@@ -1262,7 +1364,8 @@ function readPart(partElement, counter, skipped) {
   //   pendingGrace … 読んだ前打音で、次の主音に付けるもの { type, pitch }（なければ null）（ステップ11-8b）
   //   wedgeStopNext … 松葉の終わりを次の音符に付けるか（ステップ15-6）
   //   openWedges    … 開いている松葉の一覧（ステップ16-2）
-  const state = { slurNumber: null, pending: {}, lastNote: null, pendingGrace: null, wedgeStopNext: false, openWedges: [] };
+  // （保持線：openHolds … 開いている保持線の一覧 { finger, number, note }（readDirection の説明を参照））
+  const state = { slurNumber: null, pending: {}, lastNote: null, pendingGrace: null, wedgeStopNext: false, openWedges: [], openHolds: [] };
 
   let divisions = 1; // ファイルで書いていなければ 1（MusicXML の決まり）
   let firstClef = null;
@@ -1353,6 +1456,7 @@ function readPart(partElement, counter, skipped) {
               octave: Number(childText(pitchElement, "octave")),
             },
           };
+          markCourtesy(element, state.pendingGrace.pitch); // 臨時記号が書いてあれば、注意の記号の印（注意の臨時記号）
           continue;
         }
 
@@ -1922,5 +2026,10 @@ export function musicXMLToScore(text, fallbackTitle = "") {
   }
 
   // ⑪ 2音トレモロの音符にかかるタイなどを、決まりどおりに直す（直すものがなければそのまま）（ステップ14-6b）
-  return { score: cleanAlternates(score), warnings: warnings };
+  const cleaned = cleanAlternates(score);
+
+  // ⑫ 要らない注意の記号の印を外す（決まりでもともと記号が付く音の印）（注意の臨時記号）
+  // （pruneCourtesy は楽譜データを直接書き換える。読み込みで作ったばかりの楽譜データなので、書き換えてよい）
+  pruneCourtesy(cleaned);
+  return { score: cleaned, warnings: warnings };
 }

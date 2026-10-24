@@ -5,6 +5,8 @@
 //   ・cloneScore      … 楽譜データをまるごとコピーする（cleanAlternates が使う）
 //   ・cleanSpanners   … 相手がいなくなったスラー・松葉の印を外す
 //   ・cleanAlternates … 2音トレモロの印を、決まりどおりに直す
+// （保持線：楽譜作成アプリと同じく、cleanSpanners で保持線（holdStart・holdEnd）も調べるようにした。
+//   そのために使う removeFinger もコピーした）
 // （edit.js は編集の関数がたくさん入った 2400行ほどの大きいファイルで、
 //   音程チェックアプリでは使わない関数ばかりなので、丸ごとは持ってこない）
 // ==========================================================
@@ -18,6 +20,19 @@ import { isAlternate } from "./model.js";
 // ----------------------------------------------------------
 export function cloneScore(score) {
   return JSON.parse(JSON.stringify(score));
+}
+
+// ----------------------------------------------------------
+// 関数：removeFinger
+// 音符の holdStart か holdEnd の並びから、指の番号を外す（空になったら項目ごと消す）（保持線）
+//   note   … 音符のデータ（直接書き換える。コピーした楽譜データの中でだけ使う）
+//   key    … "holdStart" か "holdEnd"
+//   finger … 指の番号
+// ----------------------------------------------------------
+function removeFinger(note, key, finger) {
+  if (!note[key]) return;
+  note[key] = note[key].filter((f) => f !== finger);
+  if (note[key].length === 0) delete note[key];
 }
 
 // ----------------------------------------------------------
@@ -73,6 +88,24 @@ export function cleanSpanners(part) {
     }
   });
   if (openWedge) delete openWedge.wedge; // 最後まで終わりが来なかった始まりは外す
+
+  // 保持線（始まり holdStart と終わり holdEnd）を、指の番号ごとに調べる（保持線）
+  // 松葉と同じく、1つの音符では「前の線の終わり → 次の線の始まり」の順に見る
+  const openHolds = new Map(); // 指の番号 → 始まりが付いていて、まだ終わりが来ていない音符
+  notes.forEach((note) => {
+    [...(note.holdEnd ?? [])].forEach((finger) => {
+      if (openHolds.has(finger)) {
+        openHolds.delete(finger); // 正しい組になった
+      } else {
+        removeFinger(note, "holdEnd", finger); // 始まりのない終わりは外す
+      }
+    });
+    [...(note.holdStart ?? [])].forEach((finger) => {
+      if (openHolds.has(finger)) removeFinger(openHolds.get(finger), "holdStart", finger); // 前の始まりに終わりがなかったので外す
+      openHolds.set(finger, note);
+    });
+  });
+  openHolds.forEach((note, finger) => removeFinger(note, "holdStart", finger)); // 最後まで終わりが来なかった始まりは外す
 }
 
 // ----------------------------------------------------------

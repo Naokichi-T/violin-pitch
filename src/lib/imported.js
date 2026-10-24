@@ -442,8 +442,9 @@ export function getImportedScore(id) {
  * タイトルと作曲者は空にする（練習ページでは、名前を五線譜の外に出すため。空にするとタイトルの場所を取らない）。
  * （ステップE-1：showSymbols が false のときは、弓の記号と指番号を取り除いた写しを入れる。
  *   保存してある楽譜そのものは書き換えない）
+ * （保持線：保持線（指を押さえたままにする線）も、弓の記号・指番号といっしょに取り除くようにした）
  * @param {object} record - 読み込んだ楽譜
- * @param {boolean} [showSymbols=true] - 弓の記号と指番号を描くかどうか（省略したら描く）
+ * @param {boolean} [showSymbols=true] - 弓の記号・指番号・保持線を描くかどうか（省略したら描く）
  * @returns {object} 楽譜作成アプリの形の楽譜データ（パートは1つ）
  */
 export function toRenderScore(record, showSymbols = true) {
@@ -459,26 +460,29 @@ export function toRenderScore(record, showSymbols = true) {
         name: record.partName,
         abbreviation: record.partName,
         instrument: record.instrument,
-        measures: showSymbols ? record.partMeasures : removeBowingAndFingerings(record.partMeasures),
+        measures: showSymbols ? record.partMeasures : removeBowingFingeringsAndHolds(record.partMeasures),
       },
     ],
   };
 }
 
 /**
- * 小節の並びから、弓の記号（bowing）と指番号（fingerings）を取り除いた写しを作る関数（ステップE-1）
+ * 小節の並びから、弓の記号（bowing）・指番号（fingerings）・保持線（holdStart・holdEnd）を取り除いた写しを作る関数（ステップE-1）
  * 元の小節・音符は書き換えない（音符ごとに写しを作って、その写しから消す）。
+ * （保持線：名前を removeBowingAndFingerings から変えて、保持線の始まりと終わりも消すようにした）
  * @param {object[]} partMeasures - 選んだパートの小節（読み込んだ楽譜の partMeasures）
- * @returns {object[]} 弓の記号と指番号のない小節の並び
+ * @returns {object[]} 弓の記号・指番号・保持線のない小節の並び
  */
-function removeBowingAndFingerings(partMeasures) {
+function removeBowingFingeringsAndHolds(partMeasures) {
   return partMeasures.map((measure) => ({
     ...measure,
     notes: measure.notes.map((note) => {
-      // 「...」で写しを作り、写しのほうから2つの項目を消す
+      // 「...」で写しを作り、写しのほうから項目を消す
       const copy = { ...note };
       delete copy.bowing;
       delete copy.fingerings;
+      delete copy.holdStart; // 保持線の始まり（保持線）
+      delete copy.holdEnd; // 保持線の終わり（保持線）
       return copy;
     }),
   }));

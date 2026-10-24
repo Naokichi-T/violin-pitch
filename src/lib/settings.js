@@ -514,12 +514,14 @@ export function saveRunMetronomeEnabled(enabled) {
 }
 
 // ===== 読み込んだ楽譜の、弓の記号と指番号の表示（ステップE-1） =====
+// （保持線：保持線（指を押さえたままにする線）も、この設定でいっしょに表示する・しないを切り替えるようにした。
+//   保存の名前（キー）は前と同じにしてあるので、今までの入・切の設定はそのまま使われる）
 
-// 弓の記号と指番号を表示するかどうかを保存するときの名前（キー）
+// 弓の記号・指番号・保持線を表示するかどうかを保存するときの名前（キー）
 const IMPORTED_SYMBOLS_VISIBLE_KEY = "violin-pitch:importedSymbolsVisible";
 
 /**
- * 保存しておいた「弓の記号と指番号を表示する」の入・切を読み込む関数（ステップE-1）
+ * 保存しておいた「弓の記号・指番号・保持線を表示する」の入・切を読み込む関数（ステップE-1）
  * @returns {boolean} true：表示する、false：表示しない。保存していないときは true（最初は表示する）
  */
 export function loadImportedSymbolsVisible() {
@@ -533,7 +535,7 @@ export function loadImportedSymbolsVisible() {
 }
 
 /**
- * 「弓の記号と指番号を表示する」の入・切をブラウザに保存する関数（ステップE-1）
+ * 「弓の記号・指番号・保持線を表示する」の入・切をブラウザに保存する関数（ステップE-1）
  * @param {boolean} visible - true：表示する、false：表示しない
  */
 export function saveImportedSymbolsVisible(visible) {
