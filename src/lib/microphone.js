@@ -11,6 +11,8 @@
 // 【確認用の表示（?debug=1）】
 //   iPad で音を拾わない原因を調べるため、今の状態を返す getMicDebugInfo を足した（チューナーのページで、?debug=1 のときだけ出す）
 //   原因が分かったら外す予定
+//   （試し方の印：URL に &gain=10 を付けると、届いた音を10倍にしてから調べる。&ec=1 を付けると、エコー除去などをオフにせずに頼む。
+//     iPad で、マイクの音がとても小さく届く（RMS 0.0017）と分かったので、どちらが合うかを試すため）
 
 // 波形から周波数を検出する関数を読み込む
 // （ステップD：音の大きさ（RMS）を計算する関数も読み込む）
@@ -55,6 +57,23 @@ let debugRms = 0; // 最後に取り出した波形の音量
 let debugPeak = 0; // 最後に取り出した波形の、いちばん大きい振れ幅（0〜1）
 let debugDetected = null; // 最後に調べた高さ（Hz。調べられなかったら null）
 let debugError = ""; // 最後に起きたエラー
+
+// 届いた音を大きくする部品（試し方の印 &gain=○ のときだけ使う）
+let inputGainNode = null;
+
+/**
+ * 試し方の印（URL の &gain=○・&ec=1）を読む関数（確認用。原因が分かったら外す予定）
+ * @returns {{gain: number, defaultProcessing: boolean}} gain：届いた音を何倍にするか（印がなければ 1）、defaultProcessing：エコー除去などをオフにしないか
+ */
+function readTrialOptions() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const gain = Number(params.get("gain"));
+    return { gain: Number.isFinite(gain) && gain > 0 ? gain : 1, defaultProcessing: params.get("ec") === "1" };
+  } catch (error) {
+    return { gain: 1, defaultProcessing: false };
+  }
+}
 
 // 繰り返し処理の番号（停止するときに使う）
 let animationId = null;
@@ -133,13 +152,19 @@ export async function startMicrophone(onPitch) {
   let stream;
   try {
     // 楽器の音をそのまま取り込みたいので、通話用の自動補正はすべてオフにする
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false, // エコー除去をオフ
-        noiseSuppression: false, // 雑音除去をオフ
-        autoGainControl: false, // 音量の自動調整をオフ
-      },
-    });
+    // （試し方の印 &ec=1 のときだけ、何も指定せずにブラウザのいつもの設定で頼む）
+    const trial = readTrialOptions();
+    stream = await navigator.mediaDevices.getUserMedia(
+      trial.defaultProcessing
+        ? { audio: true }
+        : {
+            audio: {
+              echoCancellation: false, // エコー除去をオフ
+              noiseSuppression: false, // 雑音除去をオフ
+              autoGainControl: false, // 音量の自動調整をオフ
+            },
+          },
+    );
   } catch (error) {
     // 許可を拒否された場合や、マイクが見つからない場合はここに来る
     context.close(); // 先に作った土台は使わないので閉じる（iPad で音を拾わないのを直した手直し）
@@ -185,7 +210,11 @@ export async function startMicrophone(onPitch) {
   // 波形を取り出す部品を作り、マイクの音をつなぐ
   analyser = audioContext.createAnalyser();
   analyser.fftSize = FFT_SIZE;
-  sourceNode.connect(analyser);
+  // 届いた音を何倍かにしてから、波形を取り出す部品につなぐ（試し方の印 &gain=○。印がなければ 1倍＝そのまま）
+  inputGainNode = audioContext.createGain();
+  inputGainNode.gain.value = readTrialOptions().gain;
+  sourceNode.connect(inputGainNode);
+  inputGainNode.connect(analyser);
 
   // 波形を取り出す部品のあとに音量0の部品をはさんで、スピーカーまでつなぐ（音は出ない）（iPad で音を拾わないのを直した手直し）
   // （Safari では、スピーカーまでつながっていない流れが処理されないことがあるため）
@@ -263,6 +292,7 @@ export function getMicDebugInfo() {
     サンプリング周波数: audioContext?.sampleRate ?? "なし",
     マイクの状態: track ? `${track.readyState}（有効: ${track.enabled}、消音: ${track.muted}）` : "なし",
     マイクの名前: track?.label ?? "なし",
+    試し方の印: `gain=${readTrialOptions().gain}倍、ec=${readTrialOptions().defaultProcessing ? "いつもの設定" : "オフ"}`,
     マイクの設定: JSON.stringify({
       sampleRate: settings.sampleRate,
       channelCount: settings.channelCount,
@@ -297,6 +327,12 @@ export function stopMicrophone() {
   if (sourceNode !== null) {
     sourceNode.disconnect();
     sourceNode = null;
+  }
+
+  // 届いた音を大きくする部品の接続も外す（試し方の印 &gain=○）
+  if (inputGainNode !== null) {
+    inputGainNode.disconnect();
+    inputGainNode = null;
   }
 
   // 音量0の部品の接続も外す（iPad で音を拾わないのを直した手直し）
