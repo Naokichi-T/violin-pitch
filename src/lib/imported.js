@@ -444,7 +444,7 @@ export function getImportedScore(id) {
  *   保存してある楽譜そのものは書き換えない）
  * （保持線：保持線（指を押さえたままにする線）も、弓の記号・指番号といっしょに取り除くようにした）
  * @param {object} record - 読み込んだ楽譜
- * @param {boolean} [showSymbols=true] - 弓の記号・指番号・保持線を描くかどうか（省略したら描く）
+ * @param {boolean} [showSymbols=true] - 弓の記号・指番号・指の保持線を描くかどうか（省略したら描く）
  * @returns {object} 楽譜作成アプリの形の楽譜データ（パートは1つ）
  */
 export function toRenderScore(record, showSymbols = true) {
@@ -471,7 +471,7 @@ export function toRenderScore(record, showSymbols = true) {
  * 元の小節・音符は書き換えない（音符ごとに写しを作って、その写しから消す）。
  * （保持線：名前を removeBowingAndFingerings から変えて、保持線の始まりと終わりも消すようにした）
  * @param {object[]} partMeasures - 選んだパートの小節（読み込んだ楽譜の partMeasures）
- * @returns {object[]} 弓の記号・指番号・保持線のない小節の並び
+ * @returns {object[]} 弓の記号・指番号・指の保持線のない小節の並び
  */
 function removeBowingFingeringsAndHolds(partMeasures) {
   return partMeasures.map((measure) => ({
