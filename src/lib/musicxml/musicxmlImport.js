@@ -80,6 +80,7 @@ import {
   hasDiamond,
   ALTERNATE_DURATIONS,
   upgradeWedgeNotes,
+  describeLength, // 短い小節の長さの文字（半拍刻みに対応。知らせの文に使う）
 } from "./model.js";
 import { BOWINGS, ARTICULATIONS, STRING_MARKS, BREATHS, ORNAMENTS, TECHNIQUES, DYNAMICS, HOLD_FINGERS } from "./symbols.js"; // HOLD_FINGERS：保持線に使える指（保持線）
 import { cleanSpanners, cleanAlternates } from "./clean.js";
@@ -1899,12 +1900,13 @@ export function musicXMLToScore(text, fallbackTitle = "") {
   let pickupTicks = 0; // アウフタクトの長さ（ティック）。アウフタクトにしないときは 0
   if (isPickup) {
     const unit = firstTotal / times[0].beats; // 拍子の下の数字の音符1つ分
-    const count = Math.ceil(longestFirst / unit);
+    // （半拍刻みに対応：半拍の単位で切り上げる。4/4 の8分音符1つ → 0.5 拍のアウフタクト）
+    const count = Math.ceil(longestFirst / (unit / 2)) / 2;
     if (count < times[0].beats) {
       measures[0].pickup = count;
       pickupTicks = count * unit;
       if (pickupTicks !== longestFirst) {
-        warnings.push(`1小節目（アウフタクト）の長さが拍の単位で割り切れないので、${times[0].beatType}分音符${count}つ分のアウフタクトにして、前を休符で埋めました`);
+        warnings.push(`1小節目（アウフタクト）の長さが半拍の単位で割り切れないので、${describeLength(times[0].beatType, count)}分のアウフタクトにして、前を休符で埋めました`);
       }
     } else {
       warnings.push("1小節目が短い（アウフタクト）ので、前を休符で埋めて拍子どおりの長さにしました");

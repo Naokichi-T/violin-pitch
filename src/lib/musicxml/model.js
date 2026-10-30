@@ -1,7 +1,8 @@
 // ==========================================================
 // model.js
 // 【音程チェックアプリ】楽譜作成アプリ（string-score）の src/lib/score/model.js をそのままコピーしたもの（ステップA-1a）
-//   MusicXML の読み込み（musicxmlImport.js）が使う。中身は変えていない
+//   MusicXML の読み込み（musicxmlImport.js）が使う
+//   （半拍刻みに対応：describeLength を足した。ほかは変えていない）
 // 楽譜データの「形」の説明と、表示・計算に使う表をまとめたファイル
 // ==========================================================
 //
@@ -526,6 +527,24 @@ export function measureLength(score, i) {
     return (score.measures[0].pickup * 16 * TICKS_PER_16TH) / time.beatType;
   }
   return measureTicks(time);
+}
+
+// ----------------------------------------------------------
+// 関数：describeLength
+// 短い小節の長さ（拍の数）を、日本語の文字にして返す（半拍刻みに対応）
+//   beatType … 拍子の下の数字（1拍が何分音符か）
+//   count    … 拍の数（0.5 刻み。例：0.5・1・3.5）
+// 整数の拍はその音符のつ数、半拍は「1つ細かい音符1つ」で表す
+// 例：（4, 1） → "4分音符1つ"、（4, 0.5） → "8分音符1つ"、（4, 3.5） → "4分音符3つと8分音符1つ"
+// （楽譜作成アプリ string-score の model.js と同じもの。読み込みの知らせの文で使う）
+// ----------------------------------------------------------
+export function describeLength(beatType, count) {
+  const whole = Math.floor(count); // 整数の拍の数
+  const hasHalf = count - whole > 0; // 半拍が付くか
+  const parts = [];
+  if (whole > 0) parts.push(`${beatType}分音符${whole}つ`);
+  if (hasHalf) parts.push(`${beatType * 2}分音符1つ`);
+  return parts.join("と");
 }
 
 // ----------------------------------------------------------
