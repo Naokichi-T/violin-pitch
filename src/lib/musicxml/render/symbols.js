@@ -1,7 +1,8 @@
 // ==========================================================
 // render/symbols.js
 // 【音程チェックアプリ】楽譜作成アプリ（string-score）の src/lib/score/render/symbols.js をそのままコピーしたもの（ステップA-2）
-//   読み込んだ楽譜を五線譜に描くのに使う。中身は変えていない
+//   読み込んだ楽譜を五線譜に描くのに使う
+//   （アクセントを五線の外に置く直し（OUTSIDE_STAFF_ARTICULATIONS）を入れた。ほかは変えていない）
 //   （楽譜作成アプリで、全音符の記号の位置・記号どうしの重なり・アップボウの高さを直した版に入れ替えた）
 //   （楽譜作成アプリのステップ25で、指番号・弓などをスラーの外（上）に書くようにした版に入れ替えた）
 //   （楽譜作成アプリのステップ26で、スタッカートなどの上下・弓を指番号の上に書く形を直した版に入れ替えた）
@@ -32,6 +33,11 @@ function placeOutsideSlur(mark, slurLift) {
 // 下向きの符尾の先から、強弱記号の文字の下端までの間（ピクセル）
 const STEM_GAP = 22;
 
+// 五線の中の音でも、五線の外に置く記号の名前（アーティキュレーションのうち）
+//   スタッカート・テヌート・スタッカーティシモは、玉のすぐそば（五線の中）に置く。
+//   アクセントは、市販の楽譜と同じく五線の外に置く（マルカートは VexFlow のままで五線の外）
+const OUTSIDE_STAFF_ARTICULATIONS = new Set(["accent"]);
+
 // ----------------------------------------------------------
 // 関数：addSymbols
 // 音符に、五線の上や音符の近くに付く記号を付ける
@@ -61,6 +67,9 @@ export function addSymbols(VF, staveNote, note, slurLift = 0) {
     if (!symbol) continue; // 表にない名前は無視する
     const articulation = new VF.Articulation(symbol.vf);
     articulation.setPosition(stemUp ? BELOW : ABOVE);
+    // 五線の外に出す記号（アクセント）は、五線の中の音でも線の間に入れず、五線の外に置く
+    //   （VexFlow のままだと、アクセントは五線の線の間に入って、玉やスラーにくっつく）
+    if (OUTSIDE_STAFF_ARTICULATIONS.has(name)) articulation.setBetweenLines(false);
     articulation.followsStem = true; // 符尾の向きで上下が決まる記号（ステップ26）
     staveNote.addModifier(articulation, 0);
   }
