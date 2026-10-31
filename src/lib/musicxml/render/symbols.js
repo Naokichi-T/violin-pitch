@@ -2,7 +2,7 @@
 // render/symbols.js
 // 【音程チェックアプリ】楽譜作成アプリ（string-score）の src/lib/score/render/symbols.js をそのままコピーしたもの（ステップA-2）
 //   読み込んだ楽譜を五線譜に描くのに使う
-//   （アクセントを五線の外に置く直し（OUTSIDE_STAFF_ARTICULATIONS）を入れた。ほかは変えていない）
+//   （アクセントを五線の外に置く直し（OUTSIDE_STAFF_ARTICULATIONS）と、連桁の音符の指番号などを積む高さの決め直し（relayoutBeamedMarks）を入れた。ほかは変えていない）
 //   （楽譜作成アプリで、全音符の記号の位置・記号どうしの重なり・アップボウの高さを直した版に入れ替えた）
 //   （楽譜作成アプリのステップ25で、指番号・弓などをスラーの外（上）に書くようにした版に入れ替えた）
 //   （楽譜作成アプリのステップ26で、スタッカートなどの上下・弓を指番号の上に書く形を直した版に入れ替えた）
@@ -188,6 +188,33 @@ export function placeArticulations(VF, staveNote) {
     if (!modifier.followsStem) return;
     modifier.setPosition(stemUp ? VF.Modifier.Position.BELOW : VF.Modifier.Position.ABOVE);
   });
+}
+
+// ----------------------------------------------------------
+// 関数：relayoutBeamedMarks
+// 連桁でつながった音符の、五線の上に積む記号（スタッカートなどの記号・トリルなど・指番号・弓の文字）の
+// 積む高さ（textLine）を、連桁で伸ばしたあとの符尾の長さで決め直す
+// 【なぜ】VexFlow は、記号を積む高さを、音符を並べる（format）ときの「元の符尾の長さ」で決める。
+//   連桁でつなぐと符尾は連桁まで伸びるが、それは並べたあと（postFormat）なので、高さの決め直しに間に合わない。
+//   低い音（符尾が短く、五線の上端に届かない音）では、「記号を五線の上端まで持ち上げる」計算になって、
+//   同じ連桁の中の、高い音（符尾が元から長い音）の記号より、1段（約10px）高く置かれていた
+//   （例：連桁の中の「ラ」の指番号 0 と、「レ」の指番号 0 の高さがずれる）
+//   → 連桁で符尾を伸ばしたあとに、記号を積む高さの計算だけをやり直す（横の位置の計算は触らない）
+//   VF        … VexFlow の部品一式
+//   staveNote … VexFlow の音符（連桁を作って、符尾を伸ばしたあとのもの）
+// ----------------------------------------------------------
+export function relayoutBeamedMarks(VF, staveNote) {
+  if (typeof staveNote.getBeam !== "function" || !staveNote.getBeam()) return; // 連桁のない音符は元のまま
+  if (staveNote.getStemDirection() !== VF.Stem.UP) return; // 符尾が下向きの音符は、符尾が玉の下にあるので関係ない
+  const context = staveNote.getModifierContext();
+  if (!context) return;
+  const members = context.members; // 種類ごとにまとめた記号の入れ物（{ Articulation: [...], Annotation: [...], ... }）
+  // 横の位置の計算に使う状態（leftShift など）は変えないよう、積む高さだけを数える新しい状態でやり直す
+  const state = { leftShift: 0, rightShift: 0, textLine: 0, topTextLine: 0 };
+  // VexFlow が決めるのと同じ順番（記号 → 装飾 → 文字）で、積む高さを決め直す
+  VF.Articulation.format(members["Articulation"] ?? [], state);
+  VF.Ornament.format(members["Ornament"] ?? [], state);
+  VF.Annotation.format(members["Annotation"] ?? [], state);
 }
 
 // ----------------------------------------------------------
