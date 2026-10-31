@@ -28,6 +28,9 @@ const CHIME_ENABLED_STORAGE_KEY = "violin-pitch:chime-enabled";
 // 判定のレベル（ノーマル・イージー）を保存するときの名前
 const LEVEL_STORAGE_KEY = "violin-pitch:level";
 
+// 「じっくり」で音程を外したとき、弾き終わりに正しい音（目標の音）を鳴らすかどうかを保存するときの名前（外したら正しい音を鳴らす）
+const MISS_TONE_ENABLED_STORAGE_KEY = "violin-pitch:miss-tone-enabled";
+
 /**
  * 最後に選んだ音律の id を、ブラウザから読み込む関数
  * 保存されていないときや、読み込めないときは、最初の設定（DEFAULT_TEMPERAMENT_ID）を返す。
@@ -221,6 +224,42 @@ export function saveChimeEnabled(enabled) {
   try {
     // true・false を、'true'・'false' という文字に直して保存する
     localStorage.setItem(CHIME_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (error) {
+    // 保存領域を使えないときは、保存をあきらめる（アプリはそのまま使える）
+  }
+}
+
+/**
+ * 「じっくり」で音程を外したとき、弾き終わりに正しい音（目標の音）を鳴らすかどうかを、ブラウザから読み込む関数（外したら正しい音を鳴らす）
+ * 保存されていないときや、読み込めないときは、「鳴らす」（true）を返す。
+ * ブラウザの中でだけ使える機能なので、ページが画面に表示された後に呼ぶこと。
+ * @returns {boolean} 鳴らすなら true、鳴らさないなら false
+ */
+export function loadMissToneEnabled() {
+  try {
+    // 保存されている値を取り出す（'true' か 'false' という文字で入っている）
+    const saved = localStorage.getItem(MISS_TONE_ENABLED_STORAGE_KEY);
+
+    // 'false' と保存されているときだけ「鳴らさない」にする
+    if (saved === "false") {
+      return false;
+    }
+  } catch (error) {
+    // 保存領域を使えないときは何もせず、下で「鳴らす」を返す
+  }
+
+  // 保存されていないとき、'true' のとき、読み込めなかったとき
+  return true;
+}
+
+/**
+ * 「じっくり」で音程を外したとき、弾き終わりに正しい音を鳴らすかどうかを、ブラウザに保存する関数（外したら正しい音を鳴らす）
+ * @param {boolean} enabled - 鳴らすなら true、鳴らさないなら false
+ */
+export function saveMissToneEnabled(enabled) {
+  try {
+    // true・false を、'true'・'false' という文字に直して保存する
+    localStorage.setItem(MISS_TONE_ENABLED_STORAGE_KEY, String(enabled));
   } catch (error) {
     // 保存領域を使えないときは、保存をあきらめる（アプリはそのまま使える）
   }

@@ -14,6 +14,8 @@
   // 目標の音を1つずつ表示し、マイクの音とのズレをメーターで見せる。
   // 音程が合った状態を一定時間保てたら、次の音へ進む。
   // （ステップB：五線譜の部分だけを、使う側から差し替えられるようにした（staff）。読み込んだ楽譜の練習ページで使う）
+  // （外したら正しい音を鳴らす：音程を外して弾き終わったとき（音が途切れたとき）に、目標の音を1秒鳴らす。設定でオン・オフできる。
+  //   手入力の楽譜の練習ページと、読み込んだ楽譜の練習ページの両方で使われる）
 
   // onMount：この部品が画面に表示された直後に処理をするための仕組み
   // onDestroy：この部品が画面から消えるときに後片付けをするための仕組み
@@ -27,7 +29,8 @@
   import { getFrequency, getCentsFromEqual, getOpenStringFrequency } from "#lib/tuning.js";
 
   // 合図の音の設定を、ブラウザから読み込む関数と、ブラウザに保存する関数を読み込む
-  import { loadChimeEnabled, saveChimeEnabled } from "#lib/settings.js";
+  // （外したら正しい音を鳴らす：正しい音を鳴らすかどうかの設定も読み込む）
+  import { loadChimeEnabled, saveChimeEnabled, loadMissToneEnabled, saveMissToneEnabled } from "#lib/settings.js";
 
   // 指定した周波数の音を鳴らす関数、鳴っている音を止める関数、合図の音を鳴らす関数を読み込む
   import { playTone, stopTone, playChime } from "#lib/audio.js";
@@ -97,6 +100,20 @@
   // お手本の音をマイクが拾って「OK」になってしまうのを防ぐため、鳴らす長さより少し長くする
   const MUTE_MILLISECONDS = LISTEN_SECONDS * 1000 + 200;
 
+  // ===== 外したら正しい音を鳴らす（外したら正しい音を鳴らす） =====
+
+  // 「外した」とみなすのに必要な、「高い」「低い」が続いた時間（ミリ秒）
+  // 音の出はじめや、音の高さを探してすべる一瞬の間は、外したことにしないため
+  const MISS_OFF_PITCH_MILLISECONDS = 200;
+
+  // 「弾き終わった」とみなすのに必要な、音が出ていない時間（ミリ秒）
+  // 弓を返すときなどの、ごく短い途切れでは鳴らさないため
+  const MISS_SOUND_END_MILLISECONDS = 300;
+
+  // 前の音を弾き続けているとみなす幅（セント）
+  // 通過した前の音を伸ばしている間は、次の音を外したことにしない
+  const PREVIOUS_NOTE_CENTS = 50;
+
   // ===== 画面に表示する値（$state を付けると、値が変わったとき画面も自動で更新される） =====
 
   // 今の目標の音が何番目か（0から始まる）
@@ -140,6 +157,18 @@
   // 音がいったん途切れるのを待っているかどうか
   // 同じ高さの音が続くときに、前の音を弾き続けているだけで通過してしまうのを防ぐ
   let needRelease = false;
+
+  // 今の音で「外した」と分かっているか（true：外した。弾き終わったら、正しい音を鳴らす）
+  let missed = false;
+
+  // 「高い」「低い」が続きはじめた時刻（ミリ秒）。続いていないときは null
+  let offPitchStart = null;
+
+  // 音が出なくなりはじめた時刻（ミリ秒）。音が出ているときは null
+  let silenceStart = null;
+
+  // 1つ前に通過した音の周波数（Hz）。前の音を伸ばしているだけのとき、外したことにしないために使う。なければ null
+  let previousNoteFrequency = null;
 
   // 今の目標の音のデータ
   // $derived を付けると、targetIndex が変わるたびに自動で取り出し直される
@@ -275,6 +304,7 @@
     if (now < muteUntil) {
       detectedFrequency = null;
       resetHold();
+      resetMiss();
       return;
     }
 
@@ -289,6 +319,7 @@
     // 次の音へ進んだ直後の待ち時間の間は、何も数えない
     if (now < waitUntil) {
       resetHold();
+      resetMiss();
       return;
     }
 
@@ -297,12 +328,16 @@
       if (judgement === "ok") {
         // まだ前の音が鳴りつづけているので、何も数えない
         resetHold();
+        resetMiss();
         return;
       }
 
       // 音が途切れた（または別の高さになった）ので、ここから先はふつうに判定する
       needRelease = false;
     }
+
+    // 音程を外したかどうかを数える（弾き終わったときに、正しい音を鳴らすため）
+    trackMiss(now, frequency);
 
     if (judgement === "ok") {
       // OK のとき：OK になりはじめた時刻を覚える（すでに覚えていれば、そのまま）
@@ -334,6 +369,70 @@
     holdProgress = 0;
   }
 
+  /**
+   * 「外した」の記録を、最初に戻す関数（外したら正しい音を鳴らす）
+   * 次の音へ進んだとき・目標を動かしたとき・お手本の音を鳴らしたときなど、数え直したいときに呼ぶ。
+   */
+  function resetMiss() {
+    missed = false;
+    offPitchStart = null;
+    silenceStart = null;
+  }
+
+  /**
+   * 音程を外したかどうかを数えて、弾き終わったときに正しい音を鳴らす関数（外したら正しい音を鳴らす）
+   * 音の高さが分かるたびに、handlePitch の中から呼ばれる。
+   *   ・「高い」「低い」が 0.2秒以上続いたら「外した」と覚える
+   *   ・そのあと、音が 0.3秒以上出なくなったら（弾き終わったら）、設定がオンなら目標の音を鳴らす
+   * 前の音を伸ばしているだけの間（前の音の高さに近い間）は、外したことにしない。
+   * @param {number} now - 今の時刻（ミリ秒）
+   * @param {number|null} frequency - 検出した周波数（Hz）。音が出ていないときは null
+   */
+  function trackMiss(now, frequency) {
+    // ----- 音が出ているとき -----
+    if (frequency !== null) {
+      // 音が出ているので、「音が出なくなった」時間は数え直す
+      silenceStart = null;
+
+      // 前の音を伸ばしているだけかどうか（前の音の高さとのずれが小さい）
+      const isHoldingPrevious = previousNoteFrequency !== null && Math.abs(1200 * Math.log2(frequency / previousNoteFrequency)) < PREVIOUS_NOTE_CENTS;
+
+      if (judgement === "ok" || isHoldingPrevious) {
+        // OK のとき、または前の音を伸ばしているだけのとき：外していないので、続いた時間は数え直す
+        offPitchStart = null;
+        return;
+      }
+
+      // 「高い」「低い」のとき：続きはじめた時刻を覚え、十分に続いたら「外した」と覚える
+      if (offPitchStart === null) {
+        offPitchStart = now;
+      }
+      if (now - offPitchStart >= MISS_OFF_PITCH_MILLISECONDS) {
+        missed = true;
+      }
+      return;
+    }
+
+    // ----- 音が出ていないとき -----
+    // 外していないなら、何もしない
+    offPitchStart = null;
+    if (!missed) {
+      return;
+    }
+
+    // 音が出なくなりはじめた時刻を覚え、十分に出なかったら（弾き終わったら）鳴らす
+    if (silenceStart === null) {
+      silenceStart = now;
+    }
+    if (now - silenceStart >= MISS_SOUND_END_MILLISECONDS) {
+      // 設定がオンのときだけ、目標の音を鳴らす（鳴らす間は判定が止まり、記録も消える）
+      if (missToneEnabled) {
+        playTarget();
+      }
+      resetMiss();
+    }
+  }
+
   // ===== 通過の合図の音 =====
 
   // 合図の音の高さの上限（Hz）。これより高いと耳に痛いので、超えないようにする
@@ -347,6 +446,7 @@
   // （ブラウザの保存領域は、画面に表示された後でないと使えないため、ここで読み込む）
   onMount(() => {
     chimeEnabled = loadChimeEnabled();
+    missToneEnabled = loadMissToneEnabled(); // 外したら正しい音を鳴らす
   });
 
   /**
@@ -361,6 +461,22 @@
 
     // ブラウザに保存する
     saveChimeEnabled(enabled);
+  }
+
+  // 音程を外して弾き終わったときに、正しい音（目標の音）を鳴らすかどうか（true：鳴らす、false：鳴らさない）（外したら正しい音を鳴らす）
+  // 最初は「鳴らす」にしておき、画面に表示された後で、保存された設定に入れ替える
+  let missToneEnabled = $state(true);
+
+  /**
+   * 「外したら正しい音を鳴らす」かどうかを切り替える関数（外したら正しい音を鳴らす）
+   * 「設定」の中のチェックボックスを切り替えたときに呼ばれる。設定を切り替えて、ブラウザに保存する。
+   * @param {boolean} enabled - 鳴らすなら true、鳴らさないなら false
+   */
+  function changeMissToneEnabled(enabled) {
+    missToneEnabled = enabled;
+    saveMissToneEnabled(enabled);
+    // 切り替えたときに、それまでの「外した」の記録は消す
+    resetMiss();
   }
 
   /**
@@ -401,6 +517,10 @@
 
     // 数えていた時間を最初に戻す
     resetHold();
+
+    // 外したかどうかの記録も消す。通過した音の高さは覚えておく（次の音で、前の音を伸ばしているだけなら外したことにしないため）
+    resetMiss();
+    previousNoteFrequency = targetFrequency;
 
     // 合図の音の高さ（通過した音の2オクターブ上）
     const chimeFrequency = getChimeFrequency(targetFrequency);
@@ -480,6 +600,8 @@
     targetIndex = 0;
     needRelease = false;
     resetHold();
+    resetMiss();
+    previousNoteFrequency = null;
   }
 
   /**
@@ -496,6 +618,7 @@
 
     // 数えていた時間も最初に戻す
     resetHold();
+    resetMiss();
   }
 
   /**
@@ -513,6 +636,8 @@
 
     // 目標を手動で動かしたので、数えていた時間を最初に戻す
     resetHold();
+    resetMiss();
+    previousNoteFrequency = null;
     needRelease = false;
 
     // 最後まで弾けたあとに動かした場合は、また通過の判定をするようにする
@@ -531,6 +656,7 @@
     // お手本の音が鳴っている間は、判定を止めておく
     muteUntil = performance.now() + MUTE_MILLISECONDS;
     detectedFrequency = null;
+    resetMiss(); // 外したかどうかの記録も消す（外したら正しい音を鳴らす）
   }
 
   // ===== 1画面に収める（1画面に収める手直し） =====
@@ -794,6 +920,12 @@
     <!-- checked で今の設定を表示し、切り替えられたら changeChimeEnabled を呼ぶ -->
     <input type="checkbox" checked={chimeEnabled} onchange={(event) => changeChimeEnabled(event.currentTarget.checked)} />
     音を通過したときに合図の音を鳴らす
+  </label>
+
+  <!-- 音程を外して弾き終わったときに、正しい音（目標の音）を鳴らすかどうかの切り替え（外したら正しい音を鳴らす） -->
+  <label class="chime-toggle">
+    <input type="checkbox" checked={missToneEnabled} onchange={(event) => changeMissToneEnabled(event.currentTarget.checked)} />
+    音程を外して弾き終わったら、正しい音を鳴らす
   </label>
 </details>
 
