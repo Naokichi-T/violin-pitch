@@ -11,6 +11,7 @@
   // （ステップD：リズムの判定を足したので、リズムの OK の幅を渡し、リズムの最高点も記録・表示する）
   // （ステップE-1：「通し」が動いている間は、楽譜の名前・最高点・設定などを隠して、楽譜を広く見せる。
   //   弓の記号と指番号を表示するかどうかを、チェックで切り替えられるようにした（共通の設定として保存する））
+  // （「じっくり」の前打音：「じっくり」では、前打音も1つの目標の音として判定する。「通し」と区間の決め方は今のまま）
   // （保持線：保持線（指を押さえたままにする線）も表示するようにして、チェックの名前を「弓の記号・指番号・指の保持線を表示する」にした。
   //   「保持線」だけだと何のことか分かりにくいので、「指の保持線」と書く）
 
@@ -176,8 +177,28 @@
   // 練習する音の並び（区間を決めているときは、その区間だけ）
   let practiceTargets = $derived(rangeStart === null ? allTargets : rangeTargets.slice(rangeStart, rangeEnd + 1));
 
+  // 「じっくり」で使う、前打音も入れた目標の並び（「じっくり」の前打音）
+  // 区間を決めているときは、決めたときと同じ並び（くり返しを含めるか）で作る。くり返しのない楽譜では、いつも展開した並び
+  let stepPool = $derived.by(() => {
+    if (record === null) {
+      return [];
+    }
+    const expand = rangeStart === null ? true : repeatsExist ? rangeIncludesRepeats : true;
+    return buildTargets(record, expand, true);
+  });
+
+  // 「じっくり」で練習する目標の並び（区間を決めているときは、その区間の主音と、その前打音だけ）
+  // 区間の番号は前打音を入れない並びでの番号なので、前打音を入れない並びでの番号（baseIndex）で切り出す
+  let stepTargets = $derived(rangeStart === null ? stepPool : stepPool.filter((target) => target.baseIndex >= rangeStart && target.baseIndex <= rangeEnd));
+
   // 「じっくり」の部品に渡す、音のデータの並び
-  let practiceNotes = $derived(practiceTargets.map((target) => target.note));
+  let practiceNotes = $derived(stepTargets.map((target) => target.note));
+
+  // 「じっくり」の部品に渡す、前打音の目標の位置に true が入った配列
+  let practiceGraceFlags = $derived(stepTargets.map((target) => target.grace === true));
+
+  // 楽譜に前打音の目標があるか（あれば、「前打音は…」の説明を出す）
+  let hasGraceTargets = $derived(stepPool.some((target) => target.grace === true));
 
   // 画面に表示する、今の区間の説明（例：「全体（120音）」「3小節目〜8小節目（24音）・くり返しを含む」）
   let rangeText = $derived.by(() => {
@@ -269,17 +290,20 @@
   function practiceColors(targetIndex, passed) {
     const colors = new Map(excludedColors);
 
+    // 色の表のキー（「じっくり」の前打音：前打音の目標は、最後に「-g」を付けて、主音の色とは別にする）
+    const keyOf = (target, p) => "0-" + p.measure + "-" + p.note + (target.grace ? "-g" : "");
+
     // 通過した音（タイでつながった音符も全部）を緑にする
-    practiceTargets.forEach((target, index) => {
+    stepTargets.forEach((target, index) => {
       if (passed[index]) {
-        target.positions.forEach((p) => colors.set("0-" + p.measure + "-" + p.note, PASSED_COLOR));
+        target.positions.forEach((p) => colors.set(keyOf(target, p), PASSED_COLOR));
       }
     });
 
     // 今の目標の音を青にする（いちばん最後に入れるので、緑より優先される）
-    const current = practiceTargets[targetIndex];
+    const current = stepTargets[targetIndex];
     if (current !== undefined) {
-      current.positions.forEach((p) => colors.set("0-" + p.measure + "-" + p.note, TARGET_COLOR));
+      current.positions.forEach((p) => colors.set(keyOf(current, p), TARGET_COLOR));
     }
 
     return colors;
@@ -294,7 +318,7 @@
    * @param {(index: number) => void} setTarget - 目標の音を変える関数（「じっくり」の部品から受け取ったもの）
    */
   function selectFromStaff(position, targetIndex, setTarget) {
-    const indexes = findTargetIndexes(practiceTargets, position);
+    const indexes = findTargetIndexes(stepTargets, position);
 
     // 判定しない音符（休符・灰色の音）や、区間の外の音符をタップしたときは、何もしない
     if (indexes.length === 0) {
@@ -504,8 +528,8 @@
   <ImportedStaff
     score={renderScoreData}
     noteColors={practiceColors(targetIndex, passed)}
-    focus={practiceTargets[targetIndex]?.positions[0] ?? null}
-    bands={practiceTargets[targetIndex]?.positions ?? []}
+    focus={stepTargets[targetIndex]?.positions[0] ?? null}
+    bands={stepTargets[targetIndex]?.positions ?? []}
     maxHeight={staffHeight ?? STEP_STAFF_HEIGHT}
     {scrollRequest}
     measureRange={displayRange}
@@ -566,6 +590,11 @@
       <!-- 灰色の音の説明（灰色の音があるときだけ出す） -->
       {#if excludedColors.size > 0}
         <p class="note">灰色の音は、判定しない音です（音域の外の音・トリルなどの装飾の付いた音など）。</p>
+      {/if}
+
+      <!-- 前打音の説明（前打音のある楽譜のときだけ出す）（「じっくり」の前打音） -->
+      {#if hasGraceTargets}
+        <p class="note">前打音（小さい音符）は、「じっくり」では判定します（目標になると青くなります）。「通し」では判定しません。</p>
       {/if}
 
       <!-- ===== 設定（ステップB。手入力の楽譜の練習ページと同じ並び） ===== -->
@@ -703,7 +732,7 @@
             />
           {:else}
             <!-- 「じっくり」：五線譜の部分は、上の importedStaff で描く（staff に渡す） -->
-            <StepPractice notes={practiceNotes} {currentKey} temperamentId={record.temperamentId} {tolerance} {allowOpenString} {repeatEnabled} staff={importedStaff} />
+            <StepPractice notes={practiceNotes} graceFlags={practiceGraceFlags} {currentKey} temperamentId={record.temperamentId} {tolerance} {allowOpenString} {repeatEnabled} staff={importedStaff} />
           {/if}
         {/key}
       </div>

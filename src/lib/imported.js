@@ -7,6 +7,7 @@
 // （ステップD：「通し」のリズムの最高点 bestRhythmScore を記録する関数を足した）
 // （前打音の付いた音の判定：前打音の付いた音（主音）も判定するようにした。前打音（小さい音符）そのものは判定しない。
 //   前打音の時間をよけて判定するのは importedTimeline.js（通し）。五線譜では、前打音だけを灰色にする（render.js））
+// （「じっくり」の前打音：「じっくり」では、前打音も1つの目標の音として判定する。buildTargets に includeGrace を足した）
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -385,7 +386,7 @@ export function analyzePart(score, partIndex) {
 
   // 前打音の付いた音（前打音の付いた音の判定）
   if (graceCount > 0) {
-    notices.push("前打音 " + graceCount + "か所は、前打音（灰色で表示します）のあとの音で判定します");
+    notices.push("前打音 " + graceCount + "か所は、「じっくり」では前打音も判定します（「通し」は、前打音（灰色で表示します）のあとの音で判定します）");
   }
 
   // 判定から外す音（理由ごとに「○○ 3音」の形でつなげる）
@@ -541,6 +542,8 @@ export function getExcludedNoteColors(partMeasures) {
 // {
 //   note:      { step, accidental, octave }  … 音程チェックアプリの音の形（score.js と同じ。重音ならいちばん上の音）
 //   positions: [{ measure, note }, ...]      … この音にあたる、五線譜の音符の場所（タイでつながった音符は全部入る）
+//   baseIndex: 数                            … 前打音を入れない並び（「通し」・区間で使う並び）での番号（「じっくり」の前打音）
+//   grace:     true                          … 前打音の目標のときだけ付く（前打音の目標の positions は、主音の場所）
 // }
 
 // 楽譜作成アプリの音名（"C"〜"B"）から、音程チェックアプリの音名の番号（0〜6。0 がド）への表
@@ -563,14 +566,23 @@ export function toPitchNote(pitch) {
  * ・休符と、判定から外す音（灰色の音。タイでつながった後ろの音符も）は入れない
  * ・重音は、いちばん上の音を目標にする
  * @param {object} record - 読み込んだ楽譜
+ * ・（「じっくり」の前打音）includeGrace が true のときは、判定する主音の直前に、その前打音を1つの目標として入れる
+ *   前打音が重音のときは、いちばん上の音を目標にする。前打音が音域の外のときは入れない
+ *   （主音が判定から外れる音のときは、前打音も入れない。タイの続きの音符の前打音も入れない）
+ *   前打音の目標には grace: true を付ける。前打音を入れない並びでの番号は baseIndex に入れておく
+ * @param {object} record - 読み込んだ楽譜
  * @param {boolean} expandRepeats - くり返しを展開するなら true、書いてある順に1回ずつなら false
+ * @param {boolean} [includeGrace=false] - 前打音も目標に入れるなら true（省略したら入れない。「通し」・区間を決めるときは入れない）
  * @returns {object[]} 判定する音の並び（このまとまりの先頭の説明の形）
  */
-export function buildTargets(record, expandRepeats) {
+export function buildTargets(record, expandRepeats, includeGrace = false) {
   // 小節をたどる順番（展開しないときは、0, 1, 2, … と書いてある順）
   const order = expandRepeats ? playOrder(toRenderScore(record), 0) : record.partMeasures.map((_, i) => i);
 
   const targets = [];
+
+  // 前打音を入れない並びで、次に入る主音の番号（前打音の目標に baseIndex を付けるため）
+  let baseCount = 0;
 
   // 1つ前の音符・休符と、それが「判定する音」として入った先（入っていなければ null）
   let previous = null;
@@ -610,7 +622,21 @@ export function buildTargets(record, expandRepeats) {
 
       // 判定する音：重音ならいちばん上の音（notePitches は低い順なので最後）
       const pitches = notePitches(note);
-      const target = { note: toPitchNote(pitches[pitches.length - 1]), positions: [{ measure: i, note: j }] };
+
+      // 「じっくり」の前打音：前打音の付いた主音なら、主音の直前に前打音の目標を入れる
+      if (includeGrace && note.grace) {
+        // 前打音の高さ（重音の前打音なら、いちばん上の音。低い順に並んでいるので最後）
+        const gracePitches = [note.grace.pitch, ...(note.grace.chord ?? [])];
+        const graceTop = gracePitches[gracePitches.length - 1];
+        const graceNumber = pitchNumber(graceTop);
+        // 判定できる音域に入っているときだけ入れる
+        if (graceNumber >= MIN_NOTE_NUMBER && graceNumber <= MAX_NOTE_NUMBER) {
+          targets.push({ note: toPitchNote(graceTop), positions: [{ measure: i, note: j }], grace: true, baseIndex: baseCount });
+        }
+      }
+
+      const target = { note: toPitchNote(pitches[pitches.length - 1]), positions: [{ measure: i, note: j }], baseIndex: baseCount };
+      baseCount += 1;
       targets.push(target);
       previousTarget = target;
     });
@@ -636,11 +662,16 @@ export function hasRepeats(record) {
  * くり返しを展開した並びでは、同じ音符が2回以上出てくることがあるので、全部の番号を返す。
  * @param {object[]} targets - 判定する音の並び
  * @param {{measure: number, note: number}} position - 五線譜の音符の場所
+ * （「じっくり」の前打音：前打音の目標は数えない。五線譜の音符をタップしたときは、主音が目標になる）
  * @returns {number[]} 番号（0から）の配列（小さい順）。判定する音でない音符（休符・灰色の音）なら空の配列
  */
 export function findTargetIndexes(targets, position) {
   const indexes = [];
   targets.forEach((target, index) => {
+    // 前打音の目標は、タップで選ぶ相手にしない
+    if (target.grace) {
+      return;
+    }
     if (target.positions.some((p) => p.measure === position.measure && p.note === position.note)) {
       indexes.push(index);
     }

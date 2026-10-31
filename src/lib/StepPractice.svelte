@@ -14,6 +14,7 @@
   // 目標の音を1つずつ表示し、マイクの音とのズレをメーターで見せる。
   // 音程が合った状態を一定時間保てたら、次の音へ進む。
   // （ステップB：五線譜の部分だけを、使う側から差し替えられるようにした（staff）。読み込んだ楽譜の練習ページで使う）
+  // （「じっくり」の前打音：読み込んだ楽譜の練習では、前打音も1つの目標の音として並ぶ。graceFlags で、どの目標が前打音かを受け取る）
   // （外したら正しい音を鳴らす：音程を外して弾き終わったとき（音が途切れたとき）に、目標の音を1秒鳴らす。設定でオン・オフできる。
   //   手入力の楽譜の練習ページと、読み込んだ楽譜の練習ページの両方で使われる）
 
@@ -55,6 +56,7 @@
   // tolerance     ：「OK」とする範囲（セント）。判定のレベルによって変わる
   // allowOpenString：開放弦の高さで弾いた音も OK にするかどうか（true：する）
   // repeatEnabled  ：最後の音まで弾けたら、最初の音に戻ってくり返すかどうか（true：くり返す）
+  // graceFlags     ：notes と同じ順番で、前打音の目標の位置に true が入った配列（「じっくり」の前打音）。渡さなければ、前打音はない
   // staff          ：五線譜の部分を差し替えるときに渡す、描き方のまとまり（Svelte の snippet）（ステップB）
   //                  渡さなければ、今までどおりの五線譜（Staff）を出す
   //                  渡すときは、次の3つを受け取って描く：
@@ -66,7 +68,10 @@
   //                    staffHeight … 五線譜の枠の高さの上限（CSS の書き方。例："412px"）（高さを測って合わせる手直し）
   //                                  練習を始めたあとは、下に並ぶものの高さを測って決めた値。始める前は STEP_STAFF_HEIGHT
   //                  null が初期値（渡されなかったとき）
-  let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled, staff = null } = $props();
+  let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled, graceFlags = [], staff = null } = $props();
+
+  // 今の目標が前打音かどうか（true：前打音）。目標の音の見出しに「前打音」と添えるのに使う（「じっくり」の前打音）
+  let isGraceTarget = $derived(graceFlags[targetIndex] === true);
 
   // ===== 判定に関する設定値 =====
 
@@ -814,6 +819,10 @@
     <!-- くり返すときは、今が何回目かも表示する（弾けた回数 ＋ 1 が、今の回） -->
     {#if repeatEnabled}
       ・くり返し {completedRounds + 1}回目
+    {/if}
+    <!-- 前打音が目標のときは、そのことを添える（「じっくり」の前打音） -->
+    {#if isGraceTarget}
+      ・前打音
     {/if}
   </p>
 

@@ -609,8 +609,10 @@ function drawSystems(VF, context, info, staveYs, isDraft) {
           }
           // 【音程チェックアプリ（前打音の付いた音の判定）】前打音は判定しないので、いつも灰色にする
           //   （noteColors を渡したとき＝音程チェックアプリの五線譜のときだけ。主音の色とは別に、前打音の小さな音符に色を付ける）
+          // （「じっくり」の前打音：前打音を目標にしているときは、色の表に「パート-小節-番号-g」の色があれば、その色にする（青・緑など））
           if (info.noteColors && staveNote.vpGraceNote) {
-            staveNote.vpGraceNote.setStyle({ fillStyle: GRACE_COLOR, strokeStyle: GRACE_COLOR });
+            const graceColor = info.noteColors.get(`${p}-${i}-${j}-g`) ?? GRACE_COLOR;
+            staveNote.vpGraceNote.setStyle({ fillStyle: graceColor, strokeStyle: graceColor });
           }
           // 何パート目・何小節目・何番目の音かも一緒に覚えておく（当たり判定に使う）
           allNotes[p].push({ staveNote: staveNote, data: note, line: l, part: p, measure: i, note: j });
