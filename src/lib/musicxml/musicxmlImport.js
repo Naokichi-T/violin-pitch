@@ -82,6 +82,7 @@ import {
   upgradeWedgeNotes,
   describeLength, // 短い小節の長さの文字（半拍刻みに対応。知らせの文に使う）
 } from "./model.js";
+import { marksFromFile } from "./beams.js"; // 連桁の印（楽譜作成アプリのステップ19-2）
 import { BOWINGS, ARTICULATIONS, STRING_MARKS, BREATHS, ORNAMENTS, TECHNIQUES, DYNAMICS, HOLD_FINGERS } from "./symbols.js"; // HOLD_FINGERS：保持線に使える指（保持線）
 import { cleanSpanners, cleanAlternates } from "./clean.js";
 import { pruneCourtesy } from "./accidentals.js"; // 要らない注意の記号の印を外す（注意の臨時記号）
@@ -1368,6 +1369,10 @@ function readPart(partElement, counter, skipped) {
   // （保持線：openHolds … 開いている保持線の一覧 { finger, number, note }（readDirection の説明を参照））
   const state = { slurNumber: null, pending: {}, lastNote: null, pendingGrace: null, wedgeStopNext: false, openWedges: [], openHolds: [] };
 
+  // このパートに連桁（<beam>）が1つでも書いてあったか（楽譜作成アプリのステップ19-2）
+  // （連桁を書かないアプリのファイルでは、全部を「つながない」にしないよう、自動のつなぎ方のままにするため）
+  let hasBeams = false;
+
   let divisions = 1; // ファイルで書いていなければ 1（MusicXML の決まり）
   let firstClef = null;
   let mainVoice = null; // このパートで使う声部（最初の音の声部）
@@ -1521,6 +1526,14 @@ function readPart(partElement, counter, skipped) {
         }
 
         if (note) {
+          // 連桁の1本目（<beam number="1">）の中身を、一時的に覚えておく（あとで marksFromFile が印にして消す）
+          // （number を書かないファイルもあるので、書いていなければ 1 とみなす）
+          const beamElement = childElements(element, "beam").find((beam) => (beam.getAttribute("number") ?? "1") === "1");
+          if (beamElement) {
+            note.beamXml = beamElement.textContent.trim();
+            hasBeams = true;
+          }
+
           // 記号を付ける（ステップ8-4a）
           applyPending(note, state, counter);
           readNotations(element, note, state, counter);
@@ -1577,7 +1590,7 @@ function readPart(partElement, counter, skipped) {
     });
   });
 
-  return { measures: measures, firstClef: firstClef, problems: problems };
+  return { measures: measures, firstClef: firstClef, problems: problems, hasBeams: hasBeams };
 }
 
 // 2音トレモロにまとめられなかったとき、組の音を「半分の長さの形」にする表（ステップ14-6b）
@@ -1944,6 +1957,18 @@ export function musicXMLToScore(text, fallbackTitle = "") {
       }
       partMeasures.push(measure);
     }
+
+    // 連桁：ファイルのつなぎ方を、このアプリの印（join・break）にする（楽譜作成アプリのステップ19-2）
+    //   ・パートに <beam> が1つもなければ、自動のつなぎ方のまま（一時的な印 beamXml を消すだけ）
+    //   ・アウフタクトの小節は、拍子どおりの小節の後ろの部分として区切る（画面と同じ）
+    partMeasures.forEach((measure, i) => {
+      if (read.hasBeams) {
+        const offset = i === 0 && isPickup && pickupTicks > 0 ? measureTicks(times[0]) - pickupTicks : 0;
+        marksFromFile(measure.notes, times[i], offset);
+      } else {
+        measure.notes.forEach((note) => delete note.beamXml);
+      }
+    });
 
     // パートの最後の音からタイが出ていたら外す（つながる先がない）
     const lastNotes = partMeasures[partMeasures.length - 1].notes;
