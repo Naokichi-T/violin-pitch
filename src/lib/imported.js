@@ -20,7 +20,7 @@
 //   partName:      選んだパートの名前（例：'Violin I'）
 //   instrument:    選んだパートの楽器（'violin'・'viola' など）
 //   keyId:         調の id（例：'D-dur'。読み込むときに選んだ長調・短調）
-//   temperamentId: 音律の id（読み込んだときに選ばれていた音律）
+//   temperamentId: 音律の id（読み込んだときに選ばれていた音律。練習ページで変えると、楽譜ごとに覚える）
 //   tempo:         1小節目のテンポ（♩＝○○）
 //   tempoText:     速度記号（'Allegro' など。なければ空の文字）
 //   measures:      楽譜全体の小節の情報（拍子・調・途中のテンポ・rit.・くり返しなど。楽譜作成アプリと同じ形）
@@ -776,5 +776,25 @@ export function saveFlowScale(id, scale) {
     return false;
   }
   score.flowScale = scale;
+  return writeImportedScores(scores);
+}
+
+/**
+ * 音律を、その楽譜に保存する関数
+ * 音律は、読み込んだ楽譜の中に temperamentId という名前で入れてある。練習ページで選び直したときに、楽譜ごとに覚えるために使う。
+ * （音律を変えても、楽譜の音は変わらないので、「通し」の最高点は消さない）
+ * @param {string} id - 楽譜の id
+ * @param {string} temperamentId - 音律の id（'just'・'pythagorean'・'equal'）
+ * @returns {boolean} 保存できたら true
+ */
+export function saveImportedTemperament(id, temperamentId) {
+  // 今の一覧を読み込んで、楽譜を探す
+  const scores = loadImportedScores();
+  const score = scores.find((item) => item.id === id);
+  if (score === undefined) {
+    return false;
+  }
+  // 音律だけを書き換える（最高点などは、そのまま残る）
+  score.temperamentId = temperamentId;
   return writeImportedScores(scores);
 }

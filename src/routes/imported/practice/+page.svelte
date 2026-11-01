@@ -30,8 +30,8 @@
   // 調のデータを探す関数と、調の名前を作る関数を読み込む
   import { getKey, getKeyLabel } from "#lib/key.js";
 
-  // 音律のデータを探す関数を読み込む
-  import { getTemperament } from "#lib/tuning.js";
+  // 音律の一覧を読み込む（練習ページで音律を選び直せるようにするため）
+  import { TEMPERAMENTS } from "#lib/tuning.js";
 
   // 判定のレベル・開放弦の設定を、ブラウザから読み込む関数と、ブラウザに保存する関数を読み込む
   // （手入力の楽譜の練習ページと同じ保存場所なので、どちらで変えても同じ設定になる）
@@ -58,7 +58,8 @@
   // 「通し」の音程の最高点を記録する関数を読み込む（ステップC-1）
   // （ステップD：リズムの最高点を記録する関数も読み込む）
   // （ステップE-2：流れるモードの幅の倍率を、楽譜に保存する関数も読み込む）
-  import { recordBestPitchScore, recordBestRhythmScore, saveFlowScale } from "#lib/imported.js";
+  // （音律の選び直し：音律を、楽譜に保存する関数も読み込む）
+  import { recordBestPitchScore, recordBestRhythmScore, saveFlowScale, saveImportedTemperament } from "#lib/imported.js";
 
   // ===== 練習のモードに関する設定値（ステップB） =====
 
@@ -402,6 +403,25 @@
   }
 
   /**
+   * 音律を選び直す関数（選択欄を変えたときに呼ばれる）
+   * 画面の楽譜の記録（record）の音律を書き換えて、その楽譜に保存する（次に開いても同じ音律になる）。
+   * 判定に使う部品には record.temperamentId が渡されているので、これだけで、判定・目標の音の高さが新しい音律に変わる。
+   * 純正律以外にしたときは、「開放弦の設定」は（showsOpenStringSetting が false になって）自動で隠れる。
+   * 「通し」の最高点は、楽譜の音が変わらないので、そのまま残す。
+   * @param {string} temperamentId - 選んだ音律の id（'just'・'pythagorean'・'equal'）
+   */
+  function changeTemperament(temperamentId) {
+    // 楽譜が読み込めていないときは、何もしない
+    if (record === null) {
+      return;
+    }
+    // 画面に出している記録の音律を書き換える（→ 判定の部品に新しい音律が渡る）
+    record.temperamentId = temperamentId;
+    // その楽譜に保存する（保存できなかったときも、このページを開いている間は新しい音律で練習できる）
+    saveImportedTemperament(record.id, temperamentId);
+  }
+
+  /**
    * 「弓の記号・指番号・指の保持線を表示する」設定を切り替える関数（ステップE-1。保持線：保持線も足した）
    * チェックボックスを押したときに呼ばれる。設定をブラウザに保存して、五線譜に描く形の楽譜を作り直す（→ 五線譜が描き直される）。
    * @param {boolean} visible - チェックが入っているかどうか（true：表示する）
@@ -559,7 +579,13 @@
       <h1>{record.name}</h1>
       <div class="score-info-row">
         <p class="detail">
-          {record.partName}・{getKeyLabel(currentKey)}・♩＝{record.tempo}・{getTemperament(record.temperamentId).name}
+          {record.partName}・{getKeyLabel(currentKey)}・♩＝{record.tempo}・
+          <!-- 音律の選択欄：選ぶと、判定に使う音の高さがすぐ切り替わり、楽譜ごとに覚える -->
+          <select class="temperament-select" aria-label="音律" value={record.temperamentId} onchange={(event) => changeTemperament(event.currentTarget.value)}>
+            {#each TEMPERAMENTS as temperament (temperament.id)}
+              <option value={temperament.id}>{temperament.name}</option>
+            {/each}
+          </select>
         </p>
         <!-- 指板の図へのリンク。アドレスの最後に「?key=調の id」を付けて、楽譜の調を引き継ぐ（ステップB） -->
         <a class="fingerboard-link" href="/fingerboard?key={record.keyId}">指板で見る →</a>
@@ -781,6 +807,16 @@
     margin: 2px 0 0 0;
     font-size: 0.85rem;
     color: #616161;
+  }
+
+  /* 音律の選択欄：まわりの小さな文字に合わせる */
+  .temperament-select {
+    font-size: 0.85rem;
+    color: #424242;
+    padding: 2px 4px;
+    border: 1px solid #bdbdbd;
+    border-radius: 6px;
+    background: #fff;
   }
 
   /* 指板の図へのリンク */
