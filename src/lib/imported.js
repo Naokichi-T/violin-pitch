@@ -60,6 +60,9 @@ const MAX_NOTE_NUMBER = 95;
 // 判定から外す音符の色（灰色）（ステップA-2）
 const EXCLUDED_COLOR = "#9e9e9e";
 
+// 練習する区間の外の音符の色（判定から外す音の灰色より、もっと薄い灰色）（区間の外を薄くする）
+const OUT_OF_RANGE_COLOR = "#d0d0d0";
+
 // ===== 判定から外す理由 =====
 // 音符のどこを見て外すかと、知らせるときの名前
 //   range     ：音域の外（重音なら、いちばん上の音で調べる）
@@ -548,6 +551,7 @@ export function getExcludedNoteColors(partMeasures) {
 //   positions: [{ measure, note }, ...]      … この音にあたる、五線譜の音符の場所（タイでつながった音符は全部入る）
 //   baseIndex: 数                            … 前打音を入れない並び（「通し」・区間で使う並び）での番号（「じっくり」の前打音）
 //   grace:     true                          … 前打音の目標のときだけ付く（前打音の目標の positions は、主音の場所）
+//   orderStep: 数                            … 小節をたどる順番の何番目の小節で出てきたか（くり返しで同じ小節が2回出てきても区別できる）（区間の外を薄くする）
 // }
 
 // 楽譜作成アプリの音名（"C"〜"B"）から、音程チェックアプリの音名の番号（0〜6。0 がド）への表
@@ -635,11 +639,12 @@ export function buildTargets(record, expandRepeats, includeGrace = false) {
         const graceNumber = pitchNumber(graceTop);
         // 判定できる音域に入っているときだけ入れる
         if (graceNumber >= MIN_NOTE_NUMBER && graceNumber <= MAX_NOTE_NUMBER) {
-          targets.push({ note: toPitchNote(graceTop), positions: [{ measure: i, note: j }], grace: true, baseIndex: baseCount });
+          targets.push({ note: toPitchNote(graceTop), positions: [{ measure: i, note: j }], grace: true, baseIndex: baseCount, orderStep: s });
         }
       }
 
-      const target = { note: toPitchNote(pitches[pitches.length - 1]), positions: [{ measure: i, note: j }], baseIndex: baseCount };
+      // orderStep：小節をたどる順番（order）の何番目の小節で出てきた音か（区間の外を薄くするときに使う）
+      const target = { note: toPitchNote(pitches[pitches.length - 1]), positions: [{ measure: i, note: j }], baseIndex: baseCount, orderStep: s };
       baseCount += 1;
       targets.push(target);
       previousTarget = target;
@@ -686,26 +691,115 @@ export function findTargetIndexes(targets, position) {
 /**
  * 区間を選ぶときにタップした2つの音符から、区間（判定する音の並びの、始めと終わりの番号）を決める関数（ステップB）
  * 前にあるほうを始め、後ろにあるほうを終わりにする（終わりの音符を先にタップしてもよい）。
- * くり返しを展開した並びでは、始めは「その音符の1回目」、終わりは「その音符の最後の回」にする。
+ * （区間の決め方の手直し）くり返しを展開した並びでは、同じ音符が2回以上出てくるので、
+ *   「始め ≦ 終わり」になる組み合わせの中から、いちばん短い区間を選ぶ。
+ *   長さが同じ区間がいくつかあるときは、前にあるほう（始めの番号が小さいほう）を選ぶ。
+ *   例：‖: 4〜11小節目 :‖ の楽譜で、4小節目と7小節目をタップしたとき
+ *       → 1回目の4〜7小節目だけ（前は、1回目の4小節目から2回目の7小節目まで＝4〜11→4〜7 になっていた）
+ *   例：10小節目と12小節目（2番かっこ）をタップしたとき
+ *       → 2回目の10小節目から12小節目へ（いちばん近い道順）
  * @param {object[]} targets - 判定する音の並び
  * @param {{measure: number, note: number}} first - 1回目にタップした音符の場所
  * @param {{measure: number, note: number}} second - 2回目にタップした音符の場所
  * @returns {{start: number, end: number}|null} 区間の番号（0から）。どちらかが判定する音でないときは null
  */
 export function findRange(targets, first, second) {
+  // それぞれの音符が、並びの何番目に出てくるか（くり返しを展開した並びでは、2つ以上あることがある）
   const firstIndexes = findTargetIndexes(targets, first);
   const secondIndexes = findTargetIndexes(targets, second);
   if (firstIndexes.length === 0 || secondIndexes.length === 0) {
     return null;
   }
 
-  // 始め：2つの音符の「1回目」のうち、前にあるほう
-  const start = Math.min(firstIndexes[0], secondIndexes[0]);
+  // いちばんよい区間（まだ見つけていないときは null）
+  let best = null;
 
-  // 終わり：2つの音符の「最後の回」のうち、後ろにあるほう
-  const end = Math.max(firstIndexes[firstIndexes.length - 1], secondIndexes[secondIndexes.length - 1]);
+  // 始めと終わりの組み合わせを全部ためす
+  // （1回目にタップした音符が始めの場合と、2回目にタップした音符が始めの場合の両方）
+  const pairs = [
+    [firstIndexes, secondIndexes],
+    [secondIndexes, firstIndexes],
+  ];
+  pairs.forEach(([startIndexes, endIndexes]) => {
+    startIndexes.forEach((start) => {
+      endIndexes.forEach((end) => {
+        // 始めが終わりより後ろになる組み合わせ（逆向き）は使わない
+        if (start > end) {
+          return;
+        }
+        // 今までの候補より短ければ、または同じ長さで前にあれば、こちらにする
+        const isShorter = best === null || end - start < best.end - best.start;
+        const isSameAndEarlier = best !== null && end - start === best.end - best.start && start < best.start;
+        if (isShorter || isSameAndEarlier) {
+          best = { start: start, end: end };
+        }
+      });
+    });
+  });
 
-  return { start: start, end: end };
+  return best;
+}
+
+/**
+ * 練習する区間の外にある音符を、薄い灰色にするための色の表を作る関数（区間の外を薄くする）
+ * 五線譜に描く小節（fromMeasure〜toMeasure）の音符のうち、区間を弾くときに通らない音符に色を付ける。
+ * 例：4小節目1つ目〜7小節目2つ目の区間 → 7小節目の3つ目（休符）と4つ目が薄くなる
+ * ・区間を弾くときに通る音符は、休符・判定しない音も含めて、今の色のまま（色を付けない）
+ * ・くり返しのある区間でも、弾く順（buildTargets と同じ順番）で通る所は、薄くしない
+ * ・区間の外の音符に前打音が付いていれば、前打音も薄くする
+ * @param {object} record - 読み込んだ楽譜
+ * @param {object[]} targets - 区間を決めたときの、判定する音の並び（buildTargets で作ったもの。前打音は入れない並び）
+ * @param {number} start - 区間の始めが targets の何番目か（0から）
+ * @param {number} end - 区間の終わりが targets の何番目か（0から）
+ * @param {boolean} expandRepeats - targets を作ったときに、くり返しを展開したか（buildTargets に渡したのと同じ値）
+ * @param {number} fromMeasure - 五線譜に描く最初の小節の番号（0から）
+ * @param {number} toMeasure - 五線譜に描く最後の小節の番号（0から）
+ * @returns {Map<string, string>} キーは "0-小節の番号-音符の番号"（前打音は最後に "-g"）、値は色
+ */
+export function getOutOfRangeColors(record, targets, start, end, expandRepeats, fromMeasure, toMeasure) {
+  const colors = new Map();
+  const first = targets[start];
+  const last = targets[end];
+  if (first === undefined || last === undefined) {
+    return colors;
+  }
+
+  // 小節をたどる順番（buildTargets と同じ作り方なので、orderStep の番号がそろう）
+  const order = expandRepeats ? playOrder(toRenderScore(record), 0) : record.partMeasures.map((_, i) => i);
+
+  // 区間を弾くときに通る音符の場所を、キー "小節-音符" の形で集める
+  const inside = new Set();
+
+  // 区間の始めの音の小節から、終わりの音の小節まで、弾く順にたどる
+  for (let s = first.orderStep; s <= last.orderStep; s++) {
+    const i = order[s];
+    const notes = record.partMeasures[i].notes;
+    // 始めの小節は始めの音から、終わりの小節は終わりの音まで。間の小節は全部
+    const fromNote = s === first.orderStep ? first.positions[0].note : 0;
+    const toNote = s === last.orderStep ? last.positions[0].note : notes.length - 1;
+    for (let j = fromNote; j <= toNote; j++) {
+      inside.add(i + "-" + j);
+    }
+  }
+
+  // 終わりの音がタイで次の小節までつながっているときは、つながった音符も区間の中にする
+  last.positions.forEach((p) => inside.add(p.measure + "-" + p.note));
+
+  // 描く小節の音符のうち、通らない音符に薄い灰色を付ける
+  for (let i = fromMeasure; i <= toMeasure; i++) {
+    record.partMeasures[i].notes.forEach((note, j) => {
+      if (inside.has(i + "-" + j)) {
+        return;
+      }
+      colors.set("0-" + i + "-" + j, OUT_OF_RANGE_COLOR);
+      // 前打音の付いた音符なら、前打音も薄くする
+      if (note.grace) {
+        colors.set("0-" + i + "-" + j + "-g", OUT_OF_RANGE_COLOR);
+      }
+    });
+  }
+
+  return colors;
 }
 
 /**

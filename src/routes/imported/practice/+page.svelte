@@ -22,7 +22,8 @@
 
   // 読み込んだ楽譜を id で探す関数・五線譜に描く形にする関数・灰色にする音符の表を作る関数と、
   // 判定する音の並びを作る関数・くり返しがあるかを調べる関数・音符の場所から番号を探す関数・区間を決める関数を読み込む
-  import { getImportedScore, toRenderScore, getExcludedNoteColors, buildTargets, hasRepeats, findTargetIndexes, findRange } from "#lib/imported.js";
+  // （区間の外を薄くする：区間の外の音符の色の表を作る関数 getOutOfRangeColors も読み込む）
+  import { getImportedScore, toRenderScore, getExcludedNoteColors, buildTargets, hasRepeats, findTargetIndexes, findRange, getOutOfRangeColors } from "#lib/imported.js";
 
   // 小節を「3小節目」などの文字にする関数を読み込む（楽譜作成アプリからコピーしたもの）
   import { measureName } from "#lib/musicxml/model.js";
@@ -201,15 +202,20 @@
   // 楽譜に前打音の目標があるか（あれば、「前打音は…」の説明を出す）
   let hasGraceTargets = $derived(stepPool.some((target) => target.grace === true));
 
-  // 画面に表示する、今の区間の説明（例：「全体（120音）」「3小節目〜8小節目（24音）・くり返しを含む」）
+  // 画面に表示する、今の区間の説明（例：「全体（120音）」「3小節目 2つ目〜8小節目 4つ目（24音）・くり返しを含む」）
+  // （区間の決め方の手直し）始めと終わりの音が、小節の中で何つ目かも出す。休符も1つに数える（楽譜作成アプリの「○つ目」と同じ数え方）
   let rangeText = $derived.by(() => {
     if (rangeStart === null) {
       return "全体（" + allTargets.length + "音）";
     }
+    // 区間の始めの音と終わりの音の、五線譜の音符の場所（タイでつながった音は、最初の音符の場所）
     const first = practiceTargets[0].positions[0];
     const last = practiceTargets[practiceTargets.length - 1].positions[0];
+    // 「3小節目 2つ目」の形にする（note は 0 から数えるので、1 を足す）
+    const firstText = measureName(renderScoreData, first.measure) + " " + (first.note + 1) + "つ目";
+    const lastText = measureName(renderScoreData, last.measure) + " " + (last.note + 1) + "つ目";
     const repeatNote = repeatsExist ? (rangeIncludesRepeats ? "・くり返しを含む" : "・くり返しなし") : "";
-    return measureName(renderScoreData, first.measure) + "〜" + measureName(renderScoreData, last.measure) + "（" + practiceTargets.length + "音）" + repeatNote;
+    return firstText + "〜" + lastText + "（" + practiceTargets.length + "音）" + repeatNote;
   });
 
   // 五線譜に描く小節の範囲 { from, to }（ステップD-3）
@@ -221,6 +227,20 @@
     }
     const measures = practiceTargets.flatMap((target) => target.positions.map((p) => p.measure));
     return { from: Math.min(...measures), to: Math.max(...measures) };
+  });
+
+  // 練習の五線譜の、もとになる色の表（区間の外を薄くする）
+  // 灰色の音（判定から外す音）に、区間を決めているときは、区間の外の音符の薄い灰色を重ねる
+  // （「じっくり」の色（practiceColors）と「通し」の部品（baseColors）の両方で使う。区間を選ぶ画面では使わない）
+  let practiceBaseColors = $derived.by(() => {
+    if (rangeStart === null || displayRange === null || record === null) {
+      return excludedColors;
+    }
+    // 区間を決めたときと同じ並び（くり返しのない楽譜では、いつも展開した並び）
+    const expand = repeatsExist ? rangeIncludesRepeats : true;
+    const outside = getOutOfRangeColors(record, rangeTargets, rangeStart, rangeEnd, expand, displayRange.from, displayRange.to);
+    // 区間の外の色を、灰色の音の色より優先する（あとから入れたほうが残る）
+    return new Map([...excludedColors, ...outside]);
   });
 
   // 区間が変わったことを見分けるための目印。これが変わると、練習の部品を作り直して、最初の音からやり直す
@@ -289,7 +309,8 @@
    * @returns {Map<string, string>} 音符ごとの色の表
    */
   function practiceColors(targetIndex, passed) {
-    const colors = new Map(excludedColors);
+    // もとになる色：灰色の音 ＋ 区間の外の薄い灰色（区間の外を薄くする）
+    const colors = new Map(practiceBaseColors);
 
     // 色の表のキー（「じっくり」の前打音：前打音の目標は、最後に「-g」を付けて、主音の色とは別にする）
     const keyOf = (target, p) => "0-" + p.measure + "-" + p.note + (target.grace ? "-g" : "");
@@ -738,7 +759,7 @@
             <!-- 「通し」：時刻表を作る関数・テンポ・最高点を記録する関数などを渡す -->
             <ImportedRunPractice
               score={renderScoreData}
-              baseColors={excludedColors}
+              baseColors={practiceBaseColors}
               {getTimeline}
               {currentKey}
               initialTempo={runTempo}
